@@ -1,7 +1,12 @@
 [package]
 name = "rulest-mcp"
+description = "MCP JSON-RPC server exposing rulest architecture oracle tools"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 rulest-core = { path = "../rulest-core" }

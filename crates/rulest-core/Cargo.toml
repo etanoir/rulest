@@ -1,7 +1,12 @@
 [package]
 name = "rulest-core"
+description = "Core registry schema, models, queries, and advisory types for rulest"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled"] }

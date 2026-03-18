@@ -11,3 +11,6 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/etanoir/rulest"
+keywords = ["architecture", "mcp", "registry", "vibe-coding", "rust"]
+categories = ["development-tools", "command-line-utilities"]

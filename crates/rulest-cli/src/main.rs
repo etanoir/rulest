@@ -52,6 +52,10 @@ enum Commands {
         /// Symbol name to search for
         symbol: Option<String>,
 
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+
         /// Validate creation of a symbol in a target module
         #[arg(long)]
         validate_creation: Option<String>,
@@ -109,6 +113,7 @@ fn main() {
         Commands::Sync { workspace, full } => sync::run(&workspace, full),
         Commands::Query {
             symbol,
+            db,
             validate_creation,
             target,
             validate_dependency,
@@ -116,16 +121,17 @@ fn main() {
             crate_name,
             check_wip,
             suggest_reuse,
-        } => query::run(
-            symbol.as_deref(),
-            validate_creation.as_deref(),
-            target.as_deref(),
-            validate_dependency.as_deref(),
-            validate_boundary.as_deref(),
-            crate_name.as_deref(),
-            check_wip.as_deref(),
-            suggest_reuse.as_deref(),
-        ),
+        } => query::run(query::QueryArgs {
+            symbol,
+            db,
+            validate_creation,
+            target,
+            validate_dependency,
+            validate_boundary,
+            crate_name,
+            check_wip,
+            suggest_reuse,
+        }),
         Commands::Serve { db } => serve::run(&db),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),
     };

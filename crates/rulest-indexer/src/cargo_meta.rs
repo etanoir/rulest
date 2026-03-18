@@ -75,7 +75,7 @@ fn collect_rs_files(dir: &Path, base_path: &str, modules: &mut Vec<ModuleInfo>) 
 
     for entry in walker {
         if entry.file_type().is_file()
-            && entry.path().extension().map_or(false, |ext| ext == "rs")
+            && entry.path().extension().is_some_and(|ext| ext == "rs")
         {
             // Derive module name from file path
             let name = entry

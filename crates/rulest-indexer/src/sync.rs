@@ -66,8 +66,10 @@ pub fn sync_workspace(
     };
 
     let workspace_info = cargo_meta::extract_workspace(workspace_root)?;
-    let mut stats = SyncStats::default();
-    stats.crates_found = workspace_info.crates.len();
+    let mut stats = SyncStats {
+        crates_found: workspace_info.crates.len(),
+        ..SyncStats::default()
+    };
 
     // Upsert crates
     let mut crate_ids: HashMap<String, i64> = HashMap::new();

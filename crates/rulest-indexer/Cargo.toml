@@ -1,7 +1,12 @@
 [package]
 name = "rulest-indexer"
+description = "syn-based source code indexer for rulest architecture registry"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 rulest-core = { path = "../rulest-core" }
