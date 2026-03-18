@@ -1,0 +1,14 @@
+[package]
+name = "rulest-indexer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rulest-core = { path = "../rulest-core" }
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+quote = "1"
+cargo_metadata = "0.18"
+walkdir = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

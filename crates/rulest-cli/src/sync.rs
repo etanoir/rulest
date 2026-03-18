@@ -1,0 +1,37 @@
+use std::path::Path;
+
+use rulest_core::registry;
+use rulest_indexer::sync::sync_workspace;
+
+pub fn run(workspace_path: &str, force_full: bool) -> Result<(), String> {
+    let workspace = Path::new(workspace_path);
+    let workspace_dir = if workspace.is_file() {
+        workspace
+            .parent()
+            .ok_or("Cannot determine workspace directory")?
+    } else {
+        workspace
+    };
+
+    let architect_dir = workspace_dir.join(".architect");
+    let db_path = architect_dir.join("registry.db");
+
+    if !db_path.exists() {
+        return Err("Registry not found. Run `rulest init` first.".to_string());
+    }
+
+    let conn = registry::open_registry(&db_path)
+        .map_err(|e| format!("Failed to open registry: {}", e))?;
+
+    println!("Syncing workspace...");
+    let stats = sync_workspace(&conn, workspace, &architect_dir, force_full)?;
+
+    println!("Sync complete:");
+    println!("  Crates found:     {}", stats.crates_found);
+    println!("  Modules scanned:  {}", stats.modules_scanned);
+    println!("  Modules skipped:  {}", stats.modules_skipped);
+    println!("  Symbols added:    {}", stats.symbols_added);
+    println!("  Symbols removed:  {}", stats.symbols_removed);
+
+    Ok(())
+}

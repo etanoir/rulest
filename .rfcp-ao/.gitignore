@@ -1,0 +1,12 @@
+# R-FCP/AO cascade artifacts
+sessions/
+artifacts/
+contracts/
+escalations/
+services/
+diagrams/
+backups/
+findings/
+
+# Allow patterns to be git-tracked for team knowledge sharing
+!patterns/

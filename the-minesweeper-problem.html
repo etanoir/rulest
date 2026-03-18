@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Minesweeper Problem — Using Rust to Sandbox AI Unreliability in Vibe Coding</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0e12;
+    --bg-elevated: #13161c;
+    --bg-surface: #1a1e27;
+    --bg-code: #161a22;
+    --text-primary: #d4d8e0;
+    --text-secondary: #8891a0;
+    --text-dim: #5c6370;
+    --accent-rust: #e45a32;
+    --accent-rust-dim: #c44a28;
+    --accent-green: #50b87d;
+    --accent-yellow: #e5c07b;
+    --accent-blue: #61afef;
+    --accent-purple: #c678dd;
+    --accent-red: #e06c75;
+    --accent-cyan: #56b6c2;
+    --border: #252a35;
+    --border-accent: #333a48;
+    --serif: 'Instrument Serif', Georgia, serif;
+    --sans: 'Source Sans 3', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* — Hero — */
+  .hero {
+    min-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4rem 2rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 70% 50% at 20% 50%, rgba(228,90,50,0.06) 0%, transparent 70%),
+      radial-gradient(ellipse 50% 40% at 80% 30%, rgba(97,175,239,0.04) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-inner { max-width: 900px; margin: 0 auto; position: relative; z-index: 1; }
+  .hero-tag {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent-rust);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .hero-tag::before { content: ''; display: block; width: 2rem; height: 1px; background: var(--accent-rust); }
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: clamp(2.4rem, 5vw, 3.8rem);
+    font-weight: 400;
+    line-height: 1.15;
+    color: #eef0f4;
+    margin-bottom: 1.5rem;
+  }
+  .hero h1 em { font-style: italic; color: var(--accent-rust); }
+  .hero-subtitle {
+    font-size: 1.15rem;
+    color: var(--text-secondary);
+    max-width: 680px;
+    line-height: 1.7;
+  }
+  .hero-meta {
+    margin-top: 2.5rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+  }
+  .hero-meta span { display: flex; align-items: center; gap: 0.5rem; }
+  .hero-meta span::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--accent-rust-dim); }
+
+  /* — Article body — */
+  .article-body { max-width: 800px; margin: 0 auto; padding: 2rem 2rem 6rem; }
+
+  /* — Part headers — */
+  .part-header {
+    margin-top: 5rem;
+    margin-bottom: 3rem;
+    padding: 2.5rem 0;
+    border-top: 1px solid var(--border-accent);
+    border-bottom: 1px solid var(--border-accent);
+    text-align: center;
+  }
+  .part-header .part-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-rust-dim);
+    margin-bottom: 0.5rem;
+  }
+  .part-header h2 { font-family: var(--serif); font-size: 1.8rem; color: #eef0f4; margin-bottom: 0.5rem; }
+  .part-header p { color: var(--text-dim); font-size: 0.92rem; margin-bottom: 0; }
+
+  /* — Section headings — */
+  .section-marker {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-rust-dim);
+    margin-bottom: 0.75rem;
+    padding-top: 4rem;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 400;
+    color: #eef0f4;
+    margin-bottom: 1.5rem;
+    line-height: 1.25;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #c8cdd5;
+    margin-top: 2.5rem;
+    margin-bottom: 0.75rem;
+  }
+  h4 {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent-blue);
+    margin-top: 2rem;
+    margin-bottom: 0.5rem;
+  }
+  p { margin-bottom: 1.25rem; color: var(--text-primary); }
+  strong { color: #eef0f4; font-weight: 600; }
+  em { color: var(--accent-yellow); font-style: italic; }
+  a.inline-link { color: var(--accent-blue); text-decoration: none; }
+  a.inline-link:hover { text-decoration: underline; }
+
+  /* — Diagrams — */
+  .diagram-container {
+    margin: 2.5rem 0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2rem 1.5rem;
+    overflow-x: auto;
+  }
+  .diagram-container .mermaid { display: flex; justify-content: center; }
+  .diagram-caption {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    margin-top: 1rem;
+  }
+
+  /* — Code blocks — */
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-rust-dim);
+    border-radius: 6px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.7;
+    color: var(--text-primary);
+  }
+  code { font-family: var(--mono); font-size: 0.85em; }
+  p code, li code, td code {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    color: var(--accent-cyan);
+    font-size: 0.82em;
+  }
+  .code-comment { color: var(--text-dim); }
+  .code-keyword { color: var(--accent-purple); }
+  .code-type { color: var(--accent-yellow); }
+  .code-fn { color: var(--accent-blue); }
+  .code-string { color: var(--accent-green); }
+  .code-err { color: var(--accent-red); }
+  .code-key { color: var(--accent-cyan); }
+
+  /* — Side-by-side code — */
+  .side-by-side {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .side-by-side pre { margin: 0; }
+  .side-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+  .side-label-bad { color: var(--accent-red); }
+  .side-label-good { color: var(--accent-green); }
+  @media (max-width: 768px) {
+    .side-by-side { grid-template-columns: 1fr; }
+  }
+
+  /* — Tables — */
+  .table-wrap {
+    margin: 2rem 0;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  thead { background: var(--bg-surface); }
+  th {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    text-align: left;
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--border-accent);
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(97,175,239,0.03); }
+
+  /* — Callout boxes — */
+  .callout {
+    margin: 2rem 0;
+    padding: 1.25rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .callout-insight {
+    background: rgba(80,184,125,0.05);
+    border-color: rgba(80,184,125,0.2);
+  }
+  .callout-insight::before {
+    content: 'KEY INSIGHT';
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--accent-green);
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+  .callout-warning {
+    background: rgba(228,90,50,0.05);
+    border-color: rgba(228,90,50,0.2);
+  }
+  .callout-warning::before {
+    content: 'THE HARD TRUTH';
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--accent-rust);
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* — Pull quote — */
+  .pull-quote {
+    margin: 3rem 0;
+    padding: 2rem 2.5rem;
+    border-left: 3px solid var(--accent-rust);
+    background: linear-gradient(135deg, rgba(228,90,50,0.04), transparent 60%);
+  }
+  .pull-quote p {
+    font-family: var(--serif);
+    font-size: 1.35rem;
+    font-style: italic;
+    line-height: 1.5;
+    color: #c8cdd5;
+    margin-bottom: 0;
+  }
+
+  /* — ToC — */
+  .toc {
+    margin: 3rem 0;
+    padding: 1.5rem 2rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .toc-title {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+  }
+  .toc-part {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent-rust-dim);
+    margin-top: 1rem;
+    margin-bottom: 0.4rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .toc-part:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .toc ol { list-style: none; counter-reset: toc; }
+  .toc li { counter-increment: toc; margin-bottom: 0.4rem; }
+  .toc li::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--accent-rust-dim);
+    margin-right: 0.75rem;
+  }
+  .toc a { color: var(--text-secondary); text-decoration: none; font-size: 0.92rem; transition: color 0.15s; }
+  .toc a:hover { color: var(--accent-rust); }
+
+  .divider { margin: 3rem auto; width: 3rem; height: 1px; background: var(--border-accent); }
+
+  .article-footer {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .article-footer p { color: var(--text-dim); margin-bottom: 0.5rem; }
+
+  @media (max-width: 768px) {
+    .article-body { padding: 1.25rem 1.25rem 4rem; }
+    pre { padding: 1rem; font-size: 0.75rem; }
+    td, th { padding: 0.5rem 0.6rem; font-size: 0.8rem; }
+    .pull-quote { padding: 1.5rem; }
+    .pull-quote p { font-size: 1.15rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <div class="hero-tag">Field Notes from a Year of Vibe Coding</div>
+    <h1>The Minesweeper Problem<br>Using Rust to Sandbox AI Unreliability<br>in <em>Vibe Coding</em></h1>
+    <p class="hero-subtitle">
+      Guardrails ensure the AI does things right. The human ensures we build the right thing. This is a practitioner's account of building that division of labor — from the first compile error to a fully instrumented Plan-Validate-Execute pipeline with persistent architectural memory.
+    </p>
+    <div class="hero-meta">
+      <span>Enterprise Architecture × AI-Assisted Development</span>
+      <span>2025</span>
+      <span>~40 min read</span>
+    </div>
+  </div>
+</header>
+
+<div class="article-body">
+
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <div class="toc-part">Part I — Foundation</div>
+    <ol>
+      <li><a href="#thesis">The Thesis and the Three-Node Model</a></li>
+      <li><a href="#minesweeper">The Minesweeper Problem</a></li>
+      <li><a href="#three-failures">Three Failure Classes</a></li>
+      <li><a href="#why-rust">Why Rust Specifically — The Typed-Language Comparison</a></li>
+    </ol>
+    <div class="toc-part">Part II — The Initial Defense Ladder</div>
+    <ol start="5">
+      <li><a href="#compiler-wall">The Compiler Firewall (L0–L1)</a></li>
+      <li><a href="#manifest">The Tiered Manifest (L2–L5)</a></li>
+      <li><a href="#enforcement">The Enforcement Gap — CLAUDE.md vs. settings.json</a></li>
+    </ol>
+    <div class="toc-part">Part III — The Discovery Problem</div>
+    <ol start="8">
+      <li><a href="#codetracer">External Validation — codetracer and the Community Convergence</a></li>
+    </ol>
+    <div class="toc-part">Part IV — The Evolved Architecture</div>
+    <ol start="9">
+      <li><a href="#plan-validate">Plan-Validate-Execute — From Reactive to Proactive</a></li>
+      <li><a href="#oracle">The MCP Oracle — Concrete Round-Trips</a></li>
+      <li><a href="#registry">The Architecture Registry — Schema, Queries, and Lifecycle</a></li>
+      <li><a href="#evolved-ladder">The Evolved Defense Ladder</a></li>
+    </ol>
+    <div class="toc-part">Part V — Assessment</div>
+    <ol start="13">
+      <li><a href="#cost">Cost Analysis</a></li>
+      <li><a href="#residual">The Residual — What Still Requires Human Eyes</a></li>
+      <li><a href="#closing">Closing — From Compiler Bouncer to Institutional Memory</a></li>
+    </ol>
+  </nav>
+
+
+  <!-- ============================================ -->
+  <!-- PART I — FOUNDATION                          -->
+  <!-- ============================================ -->
+  <div class="part-header">
+    <div class="part-label">Part I</div>
+    <h2>Foundation</h2>
+    <p>The model, the metaphor, and why language choice is a risk management decision.</p>
+  </div>
+
+
+  <div class="section-marker" id="thesis">01 — The Model</div>
+  <h2>The Thesis and the Three-Node Model</h2>
+
+  <p>
+    Vibe coding — guiding the architecture while AI generates implementation — is a separation of concerns across three agents: the human designs, the AI codes, the compiler checks. Each has a distinct strength and a distinct failure mode:
+  </p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph LR
+    A["🧠 Architect\n(Human)"] -->|"Intent +\nConstraints"| B["⌨️ Typist\n(LLM)"]
+    B -->|"Generated\nCode"| C["🔒 Verifier\n(rustc)"]
+    C -->|"Compile Error\n(tight loop)"| B
+    C -->|"✓ Structurally\nSound"| D["⚙️ Runtime"]
+    D -->|"Logical Bug\n(wide loop)"| A
+    A -->|"Refined\nPrompt"| B
+
+    style A fill:#2d6a4f,color:#fff,stroke:#1b4332
+    style B fill:#e76f51,color:#fff,stroke:#c45e3e
+    style C fill:#264653,color:#fff,stroke:#1d3640
+    style D fill:#6c757d,color:#fff,stroke:#555
+    </pre>
+    <div class="diagram-caption">Fig 1 — The three-node model. The tight loop (AI ↔ compiler) is cheap and automated. The wide loop (runtime → human) fires only for business logic errors.</div>
+  </div>
+
+  <p>
+    The thesis: <strong>by choosing Rust, we offload structural verification from the developer to the compiler.</strong> The compiler catches memory, type, concurrency, and error-handling defects automatically, freeing the human to focus on whether the system does the <em>right thing</em>. Finding a logical error is vastly easier when you're not simultaneously hunting null dereferences and hidden race conditions.
+  </p>
+
+
+  <div class="section-marker" id="minesweeper">02 — The Core Problem</div>
+  <h2>The Minesweeper Problem</h2>
+
+  <p>
+    The bottleneck in this model is the communication channel between Architect and Typist. The developer holds the complete Minesweeper board — every mine position, every intended path, every "don't do X because Y" lesson. The AI operates under fog of war: its context window is a fixed viewport with no memory across sessions.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>What You Hold</th><th>Why AI Can't Hold It</th><th>Consequence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Complete board</strong> — full architecture, all invariants</td>
+          <td>Context window is a viewport; it sees tiles, not the board</td>
+          <td>AI optimizes locally, violates global constraints</td>
+        </tr>
+        <tr>
+          <td><strong>Mine positions</strong> — known pitfalls, past failures</td>
+          <td>No persistent memory; each prompt is a fresh game</td>
+          <td>You re-explain the same constraints repeatedly</td>
+        </tr>
+        <tr>
+          <td><strong>Path intent</strong> — <em>why</em> this route over alternatives</td>
+          <td>AI infers from surface instruction, not reasoning chain</td>
+          <td>AI takes a "valid" path that steps on a mine you didn't mark</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    That third row is the killer. You tell the AI "avoid C." But you chose to avoid C because six months ago it caused a cascade through D and E. When the AI encounters C' — a slight variant — it walks right through. <strong>You're not transferring information; you're compressing an entire decision graph into a linear prompt.</strong> That compression is inherently lossy.
+  </p>
+  <p>
+    Two strategies exist: <strong>reveal more tiles</strong> (better prompts, documentation — high ongoing cost, scales linearly) or <strong>make the mines self-announcing</strong> (type system, compiler rules — high upfront cost, near-zero marginal cost). The rest of this article is about building the second strategy into a complete system.
+  </p>
+
+
+  <div class="section-marker" id="three-failures">03 — Taxonomy</div>
+  <h2>Three Failure Classes</h2>
+
+  <p>
+    A year of practice reveals three distinct defect classes, each requiring a different mitigation:
+  </p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph LR
+    subgraph C1["🔴 Class I — Structural"]
+        S1["Memory, null deref\ndata races, type mismatch"]
+    end
+    subgraph C2["🟡 Class II — Semantic"]
+        S2["Same type, different meaning\nswapped params, wrong unit"]
+    end
+    subgraph C3["🟣 Class III — Architectural"]
+        S3["Redundant functions\nduplicate logic, broken boundaries"]
+    end
+    C1 -->|"rustc catches\nautomatically"| R1["✅ Zero cost"]
+    C2 -->|"newtypes catch\nat compile time"| R2["✅ One-time design"]
+    C3 -->|"???"| R3["⚠️ The gap"]
+
+    style C1 fill:#d62828,color:#fff
+    style C2 fill:#e9c46a,color:#000
+    style C3 fill:#7b2cbf,color:#fff
+    style R1 fill:#2d6a4f,color:#fff
+    style R2 fill:#2d6a4f,color:#fff
+    style R3 fill:#d62828,color:#fff
+    </pre>
+    <div class="diagram-caption">Fig 2 — Three failure classes. Closing the Class III gap is the central challenge of this article.</div>
+  </div>
+
+  <p>
+    Class I is Rust's core value proposition — well-documented and well-understood. Class II requires deliberate type design (covered in §5). Class III — where the AI generates code that compiles, runs correctly, but is architecturally redundant or misplaced — is the gap that the rest of this article progressively closes.
+  </p>
+
+
+  <div class="section-marker" id="why-rust">04 — The Comparison</div>
+  <h2>Why Rust Specifically — The Typed-Language Comparison</h2>
+
+  <p>
+    An honest treatment of this thesis requires addressing the obvious counterargument: <em>why not TypeScript strict mode + comprehensive tests?</em> Or Haskell? Or any language with a sufficiently expressive type system? The answer is that Rust's advantage is partly categorical and partly a matter of degree:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Defense Layer</th><th>Python / JS</th><th>TypeScript (strict)</th><th>Go</th><th>Haskell</th><th>Rust</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Null safety</td>
+          <td>❌ Runtime</td>
+          <td>✅ Compile (<code>strictNullChecks</code>)</td>
+          <td>❌ nil panics</td>
+          <td>✅ <code>Maybe</code></td>
+          <td>✅ <code>Option&lt;T&gt;</code></td>
+        </tr>
+        <tr>
+          <td>Error handling exhaustiveness</td>
+          <td>❌ Uncaught exceptions</td>
+          <td>⚠️ Partial (no enforced Result)</td>
+          <td>⚠️ Convention (err check)</td>
+          <td>✅ <code>Either</code></td>
+          <td>✅ <code>Result&lt;T,E&gt;</code> + <code>?</code></td>
+        </tr>
+        <tr>
+          <td>Data race prevention</td>
+          <td>❌ GIL hides, doesn't solve</td>
+          <td>❌ Single-threaded (runtime)</td>
+          <td>❌ Race detector (runtime)</td>
+          <td>⚠️ STM (runtime)</td>
+          <td>✅ <strong>Compile-time</strong> (Send/Sync)</td>
+        </tr>
+        <tr>
+          <td>Zero-cost newtypes</td>
+          <td>❌ Class overhead</td>
+          <td>⚠️ Branded types (workaround)</td>
+          <td>✅ Type aliases (limited)</td>
+          <td>✅ <code>newtype</code></td>
+          <td>✅ <code>struct Foo(T)</code></td>
+        </tr>
+        <tr>
+          <td>Module visibility control</td>
+          <td>❌ Convention only</td>
+          <td>⚠️ Package exports (coarse)</td>
+          <td>✅ Package-level</td>
+          <td>✅ Module exports</td>
+          <td>✅ <code>pub(crate)</code>, fine-grained</td>
+        </tr>
+        <tr>
+          <td>Typestate pattern</td>
+          <td>❌</td>
+          <td>⚠️ Possible but awkward</td>
+          <td>❌</td>
+          <td>✅ Phantom types</td>
+          <td>✅ Zero-cost phantom types</td>
+        </tr>
+        <tr>
+          <td>DDD bounded context as crate</td>
+          <td>❌ No module boundary enforcement</td>
+          <td>⚠️ Package boundaries (npm workspaces)</td>
+          <td>✅ Go modules</td>
+          <td>⚠️ Cabal packages</td>
+          <td>✅ Cargo workspace crates</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    TypeScript strict comes closest. It catches null safety and provides some type-level defenses. But three gaps are categorical, not a matter of degree: <strong>compile-time data race prevention</strong> (Rust is alone here among mainstream languages), <strong>enforced error handling exhaustiveness</strong> (TypeScript has no compiler-enforced Result equivalent), and <strong>zero-cost newtypes</strong> that don't add runtime overhead. Haskell matches Rust on type expressiveness but lacks the compile-time concurrency guarantees and the cargo workspace model that maps cleanly to DDD bounded contexts.
+  </p>
+  <p>
+    The practical implication for vibe coding: in TypeScript, you can build the manifest system and the oracle described later in this article. But you'll still need runtime tests and manual review for the concurrency and error-handling classes that Rust eliminates at compile time. Rust's advantage compounds — each layer of the defense ladder has fewer escapes.
+  </p>
+
+
+  <!-- ============================================ -->
+  <!-- PART II — INITIAL DEFENSE LADDER             -->
+  <!-- ============================================ -->
+  <div class="part-header">
+    <div class="part-label">Part II</div>
+    <h2>The Initial Defense Ladder</h2>
+    <p>Compiler firewall, newtype patterns, tiered manifests, and where this first-generation system breaks down.</p>
+  </div>
+
+
+  <div class="section-marker" id="compiler-wall">05 — L0 through L1</div>
+  <h2>The Compiler Firewall</h2>
+
+  <p>
+    Rust's compiler (<code>rustc</code>) eliminates Class I defects automatically. This is well-trodden ground, so the summary is a table, not a tutorial:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Defect</th><th>Permissive Language</th><th>Rust</th><th>AI-Specific Value</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Null dereference</td><td>Runtime crash</td><td>Compile-time (<code>Option&lt;T&gt;</code>)</td><td>AI routinely forgets null checks</td></tr>
+        <tr><td>Unhandled error</td><td>Silent failure</td><td>Compile-time (<code>Result&lt;T,E&gt;</code>)</td><td>AI defaults to happy path unless forced</td></tr>
+        <tr><td>Data race</td><td>Heisenbugs</td><td>Compile-time (ownership)</td><td>AI can't track shared state across context</td></tr>
+        <tr><td>Use after free</td><td>Segfault / corruption</td><td>Compile-time (borrow checker)</td><td>AI loses track of lifetimes in long files</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The deeper value for vibe coding: Rust forces the AI to write out <code>match</code> arms and <code>?</code> operators explicitly, making error-handling logic <strong>visible for review</strong> rather than hidden behind implicit runtime behavior.
+  </p>
+
+  <h3>Class II — The Newtype Firewall</h3>
+
+  <p>
+    The more insidious failure: the AI creates both a function and its call site, and swaps parameters of the same type.
+  </p>
+
+  <div class="side-by-side">
+    <div>
+      <div class="side-label side-label-bad">❌ Primitive obsession — compiles, wrong</div>
+      <pre><span class="code-keyword">fn</span> <span class="code-fn">create_order</span>(
+    customer_id: <span class="code-type">u64</span>,
+    product_id: <span class="code-type">u64</span>,
+    quantity: <span class="code-type">u64</span>,
+    price: <span class="code-type">u64</span>,
+) { .. }
+
+<span class="code-comment">// AI swaps params. rustc says ✓</span>
+<span class="code-fn">create_order</span>(
+    product_id,  <span class="code-err">// wrong!</span>
+    customer_id, <span class="code-err">// wrong!</span>
+    qty, price,
+);</pre>
+    </div>
+    <div>
+      <div class="side-label side-label-good">✅ Newtype wrappers — compile error</div>
+      <pre><span class="code-keyword">struct</span> <span class="code-type">CustomerId</span>(<span class="code-type">u64</span>);
+<span class="code-keyword">struct</span> <span class="code-type">ProductId</span>(<span class="code-type">u64</span>);
+<span class="code-keyword">struct</span> <span class="code-type">Quantity</span>(<span class="code-type">u32</span>);
+<span class="code-keyword">struct</span> <span class="code-type">Price</span>(<span class="code-type">u64</span>);
+
+<span class="code-keyword">fn</span> <span class="code-fn">create_order</span>(
+    c: <span class="code-type">CustomerId</span>, p: <span class="code-type">ProductId</span>,
+    q: <span class="code-type">Quantity</span>, pr: <span class="code-type">Price</span>,
+) { .. }
+
+<span class="code-comment">// AI swaps params. rustc REJECTS</span></pre>
+    </div>
+  </div>
+
+  <p>
+    Zero runtime cost — the <code>u64</code> is still a <code>u64</code> in the binary. For stronger guarantees, <strong>typestate</strong> encodes valid state transitions into the type system (the AI can't call <code>.ship()</code> on an <code>Order&lt;Draft&gt;</code>), and the <strong>builder pattern</strong> eliminates positional ambiguity entirely. The decision heuristic: if you've explained the same constraint to the AI more than twice, encode it as a type.
+  </p>
+
+
+  <div class="section-marker" id="manifest">06 — L2 through L5</div>
+  <h2>The Tiered Manifest</h2>
+
+  <p>
+    Class III — architectural rot — is where the AI creates redundant functions across context windows because it has no ambient codebase awareness. <code>rustc</code> doesn't care about redundancy. The first-generation solution is a <strong>tiered manifest</strong> that tells the AI where to look without front-loading the entire codebase into context:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>When Read</th><th>Token Cost</th><th>What It Provides</th><th>Can Drift?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Root CLAUDE.md</strong> — routing rules + ownership map</td><td>Every task</td><td>~150</td><td>"Before creating, read target module's CLAUDE.md and prelude.rs"</td><td>Yes, small surface</td></tr>
+        <tr><td><strong>Module CLAUDE.md</strong> — local capabilities + deps</td><td>Entering a module</td><td>~100</td><td>"This module owns X, consumes Y from domain — don't reimplement"</td><td>Yes, needs maintenance</td></tr>
+        <tr><td><strong><code>prelude.rs</code></strong> — actual <code>pub use</code> re-exports</td><td>Already reading code</td><td>0 extra</td><td>The real types and traits in scope — source of truth</td><td>No — compiled code</td></tr>
+        <tr><td><strong>Pre-creation grep</strong></td><td>Before creating new fn/type</td><td>0 (tool call)</td><td><code>grep -r "fn &lt;name&gt;" crates/</code></td><td>N/A</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The principle: <strong>Layer 3 is the source of truth. Layer 2 is a human-readable index. Layer 1 is a router to Layer 2.</strong> If the documentation drifts, the AI still encounters the real contracts in <code>prelude.rs</code>.
+  </p>
+
+
+  <div class="section-marker" id="enforcement">07 — The Weak Link</div>
+  <h2>The Enforcement Gap — CLAUDE.md vs. settings.json</h2>
+
+  <p>
+    The tiered manifest has a fundamental weakness: <strong>CLAUDE.md is advisory.</strong> Nothing prevents the AI from ignoring the protocol. This lesson was learned through a production incident — a <code>k3s</code> cluster wiped by a command that should never have executed.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Mechanism</th><th>Nature</th><th>Analogy</th><th>Scope</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>CLAUDE.md</code></td>
+          <td>Advisory — AI proceeds if it ignores the rule</td>
+          <td>"Please knock" sign</td>
+          <td>Can express workflow protocols ("check before creating")</td>
+        </tr>
+        <tr>
+          <td><code>settings.json</code></td>
+          <td>Enforced — operation is blocked at tool level</td>
+          <td>Locked door</td>
+          <td>Can only express command/file deny-allow rules</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The bridge: <strong>you can't enforce "do X first," but you can remove the ability to do Y without going through Z.</strong> Protect architectural control surfaces — <code>prelude.rs</code>, <code>mod.rs</code>, <code>lib.rs</code>, the domain crate — via <code>settings.json</code> deny rules. The AI can add implementation files, but cannot alter module boundaries or public APIs without human approval.
+  </p>
+
+  <pre><span class="code-comment">// settings.json — hard enforcement</span>
+{
+  <span class="code-key">"permissions"</span>: {
+    <span class="code-key">"deny"</span>: [
+      <span class="code-string">"write:crates/domain/src/**"</span>,   <span class="code-comment">// protect core types</span>
+      <span class="code-string">"write:**/prelude.rs"</span>,          <span class="code-comment">// protect public API</span>
+      <span class="code-string">"write:**/mod.rs"</span>,              <span class="code-comment">// protect module structure</span>
+      <span class="code-string">"write:**/lib.rs"</span>               <span class="code-comment">// protect crate entry points</span>
+    ]
+  }
+}</pre>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Scenario</th><th>CLAUDE.md Only</th><th>+ settings.json</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>AI creates duplicate type in domain crate</td><td>Happens silently</td><td><strong>Blocked</strong></td></tr>
+        <tr><td>AI modifies prelude to export duplicate</td><td>Happens silently</td><td><strong>Blocked</strong></td></tr>
+        <tr><td>AI creates duplicate helper in own module</td><td>Happens silently</td><td>Still possible — but isolated, discoverable via dead code</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout callout-insight">
+    <p><strong>CLAUDE.md tells the AI what to do. settings.json removes the ability to do the wrong thing.</strong> The residual — a duplicate within the AI's own module — is contained; it can't spread into architectural control surfaces.</p>
+  </div>
+
+
+  <!-- ============================================ -->
+  <!-- PART III — THE DISCOVERY PROBLEM             -->
+  <!-- ============================================ -->
+  <div class="part-header">
+    <div class="part-label">Part III</div>
+    <h2>The Discovery Problem</h2>
+    <p>The defense ladder's L5 is a bare grep. External tooling reveals how much better it can be.</p>
+  </div>
+
+
+  <div class="section-marker" id="codetracer">08 — External Validation</div>
+  <h2>codetracer and the Community Convergence</h2>
+
+  <p>
+    While building the manifest system, we encountered <a href="https://github.com/mirzalazuardi/codetracer" class="inline-link">codetracer</a> by Mirza Lazuardi — a tool that had independently arrived at the same problem from a different ecosystem (Ruby/JS). Its philosophy: <strong>use AI for reasoning, not for searching.</strong> The convergence matters because two independent practitioners identified the same bottleneck: the AI's discovery capability, not its generation capability, is the problem.
+  </p>
+  <p>
+    The concrete difference between our bare grep and what a proper discovery tool provides:
+  </p>
+
+  <div class="side-by-side">
+    <div>
+      <div class="side-label side-label-bad">Our L5 — bare grep</div>
+      <pre>$ grep -r "fn calculate_fee" crates/ \
+    --include="*.rs" -l
+
+crates/trading/src/fees.rs
+
+<span class="code-comment"># One file name. No context.
+# AI doesn't know:
+#  - what the function signature is
+#  - what module it belongs to
+#  - who calls it
+#  - whether it's pub or private
+# Result: AI creates a new one anyway
+#   because "it might be different"</span></pre>
+    </div>
+    <div>
+      <div class="side-label side-label-good">codetracer-style discovery</div>
+      <pre>$ codetracer calculate_fee crates/ \
+    --mode flow --scope
+
+<span class="code-comment">=== DEFINITIONS ===</span>
+crates/trading/src/fees.rs:42
+  <span class="code-fn">pub fn calculate_fee</span>(
+    order: &amp;Order,
+    fee_type: FeeType
+  ) -> SagasResult&lt;Price&gt;
+  scope: mod trading > impl FeeCalculator
+
+<span class="code-comment">=== CALL SITES (3) ===</span>
+  crates/trading/src/execution.rs:87
+  crates/trading/src/settlement.rs:34
+  crates/analytics/src/cost.rs:22
+
+<span class="code-comment">=== PRELUDE EXPORT ===</span>
+  trading::prelude::FeeCalculator ✓</pre>
+    </div>
+  </div>
+
+  <p>
+    The left side gives the AI a filename. The right side gives the AI a <em>decision</em>: the function exists, it's public, it takes a <code>FeeType</code> enum, and it's already called from three locations. The AI doesn't need to create a new one; it needs to call the existing one with <code>FeeType::Settlement</code>.
+  </p>
+  <p>
+    The upgraded pre-creation protocol for Rust, borrowing codetracer's principles, uses four <code>ripgrep</code> commands — each a tool call costing zero context tokens:
+  </p>
+
+  <pre><span class="code-comment"># Step 1 — Does this symbol exist? (multi-pattern)</span>
+rg "(fn |struct |enum |trait |type |const ).*calculate_fee" crates/ --include="*.rs" -n
+
+<span class="code-comment"># Step 2 — Who owns it? (scope context)</span>
+rg -n "(fn |impl |mod ).*calculate_fee" crates/ --include="*.rs" -B 5
+
+<span class="code-comment"># Step 3 — Who uses it? (call sites)</span>
+rg -n "calculate_fee\s*[\(\.\::<]" crates/ --include="*.rs" -l
+
+<span class="code-comment"># Step 4 — Is it publicly available?</span>
+rg "pub use.*calculate_fee" crates/ --include="*.rs"</pre>
+
+
+  <!-- ============================================ -->
+  <!-- PART IV — THE EVOLVED ARCHITECTURE           -->
+  <!-- ============================================ -->
+  <div class="part-header">
+    <div class="part-label">Part IV</div>
+    <h2>The Evolved Architecture</h2>
+    <p>From reactive compiler checks to a proactive, oracle-guided pipeline with persistent architectural memory. This is the novel contribution of this article.</p>
+  </div>
+
+
+  <div class="section-marker" id="plan-validate">09 — The Paradigm Shift</div>
+  <h2>Plan-Validate-Execute — From Reactive to Proactive</h2>
+
+  <p>
+    Every guardrail described so far is <strong>reactive</strong>. The AI writes code, then something catches the defect after the fact. For structural defects, this is cheap (compiler feedback loop). For architectural defects, the damage is done before detection — the duplicate function exists, the module boundary is violated, and you discover it in review.
+  </p>
+  <p>
+    The shift: AI coding agents have a <strong>plan mode</strong> that produces a plan before execution. Currently this plan is a monologue — the AI talks to itself, then acts. What if the plan was validated against the codebase by an external oracle before a single line was written?
+  </p>
+
+  <h3>What a Structured Plan Looks Like</h3>
+  <p>
+    The bridge between plan mode's natural language output and the oracle's validation engine is a <strong>structured action list</strong>. The root CLAUDE.md instructs the AI to emit this format during planning:
+  </p>
+
+  <div class="side-by-side">
+    <div>
+      <div class="side-label side-label-bad">Raw plan (unstructured)</div>
+      <pre>I'll add a settlement fee calculation
+to the trading module. I'll create a
+new function that takes an order and
+computes the fee based on the broker's
+rate schedule. I'll also need a type
+for representing currency amounts.</pre>
+    </div>
+    <div>
+      <div class="side-label side-label-good">Structured plan (actionable)</div>
+      <pre><span class="code-comment">## Planned Actions</span>
+
+<span class="code-keyword">CREATE</span>: fn calculate_settlement_fee
+  in: crates/trading/src/fees.rs
+  sig: (order: &amp;Order) -> SagasResult&lt;Price&gt;
+  purpose: compute settlement fee
+
+<span class="code-keyword">CREATE</span>: struct CurrencyAmount
+  in: crates/trading/src/types.rs
+  purpose: represent fee amounts
+
+<span class="code-keyword">MODIFY</span>: fn execute_settlement
+  in: crates/trading/src/settlement.rs
+  change: call calculate_settlement_fee</pre>
+    </div>
+  </div>
+
+  <p>
+    The structured plan is parseable. Each <code>CREATE</code> and <code>MODIFY</code> action becomes an MCP tool call to the oracle. The raw plan is a monologue the oracle can't act on.
+  </p>
+
+  <h3>The Full Round-Trip</h3>
+  <p>
+    Here's what happens to that structured plan when the oracle validates it:
+  </p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph TD
+    P1["CREATE: fn calculate_settlement_fee"] -->|"validate_creation"| O1["🔍 Oracle checks registry +\ncodebase search"]
+    O1 -->|"REUSE_EXISTING"| A1["✏️ Revised: USE existing\ncalculate_fee with\nFeeType::Settlement"]
+
+    P2["CREATE: struct CurrencyAmount"] -->|"validate_creation +\nvalidate_dependency"| O2["🔍 Oracle checks\ndomain::prelude"]
+    O2 -->|"USE_EXISTING_TYPE"| A2["✏️ Revised: IMPORT\ndomain::Price"]
+
+    P3["MODIFY: fn execute_settlement"] -->|"check_wip"| O3["🔍 Oracle checks\ngit + registry"]
+    O3 -->|"SAFE_TO_MODIFY"| A3["✅ Proceed as planned"]
+
+    style P1 fill:#6c757d,color:#fff
+    style P2 fill:#6c757d,color:#fff
+    style P3 fill:#6c757d,color:#fff
+    style O1 fill:#e9c46a,color:#000
+    style O2 fill:#e9c46a,color:#000
+    style O3 fill:#e9c46a,color:#000
+    style A1 fill:#2d6a4f,color:#fff
+    style A2 fill:#2d6a4f,color:#fff
+    style A3 fill:#2d6a4f,color:#fff
+    </pre>
+    <div class="diagram-caption">Fig 3 — Three planned actions, three oracle validations, two revisions, one proceed. The AI never writes a duplicate or creates a redundant type.</div>
+  </div>
+
+
+  <div class="section-marker" id="oracle">10 — The Oracle in Detail</div>
+  <h2>The MCP Oracle — Concrete Round-Trips</h2>
+
+  <p>
+    The Plan Validator is an MCP server exposing five tools. Each answers a specific planning question, returning structured JSON that the AI uses to revise its plan. The following are concrete request → response examples, not abstractions.
+  </p>
+
+  <h4>Tool 1: validate_creation — "Does this already exist?"</h4>
+  <p>Planned action: <code>CREATE fn calculate_settlement_fee in crates/trading/src/fees.rs</code></p>
+
+  <pre>{
+  <span class="code-key">"action"</span>: <span class="code-string">"create_function"</span>,
+  <span class="code-key">"symbol"</span>: <span class="code-string">"calculate_settlement_fee"</span>,
+  <span class="code-key">"target_module"</span>: <span class="code-string">"crates/trading/src/fees.rs"</span>,
+  <span class="code-key">"advisory"</span>: <span class="code-string">"REUSE_EXISTING"</span>,
+  <span class="code-key">"existing"</span>: {
+    <span class="code-key">"name"</span>: <span class="code-string">"calculate_fee"</span>,
+    <span class="code-key">"location"</span>: <span class="code-string">"crates/trading/src/fees.rs:42"</span>,
+    <span class="code-key">"signature"</span>: <span class="code-string">"pub fn calculate_fee(order: &amp;Order, fee_type: FeeType) -&gt; SagasResult&lt;Price&gt;"</span>,
+    <span class="code-key">"scope"</span>: <span class="code-string">"mod trading &gt; impl FeeCalculator"</span>,
+    <span class="code-key">"call_sites"</span>: <span class="code-type">3</span>,
+    <span class="code-key">"suggestion"</span>: <span class="code-string">"Use FeeType::Settlement as the fee_type parameter"</span>
+  }
+}</pre>
+
+  <p>
+    The AI sees: the function exists with a compatible signature, it's already called from 3 locations, and the difference is just an enum variant. Plan revised — no new function created.
+  </p>
+
+  <h4>Tool 2: validate_dependency — "Who provides this capability?"</h4>
+  <p>Planned action: <code>CREATE struct CurrencyAmount in crates/trading/src/types.rs</code></p>
+
+  <pre>{
+  <span class="code-key">"action"</span>: <span class="code-string">"create_type"</span>,
+  <span class="code-key">"symbol"</span>: <span class="code-string">"CurrencyAmount"</span>,
+  <span class="code-key">"advisory"</span>: <span class="code-string">"USE_EXISTING_TYPE"</span>,
+  <span class="code-key">"existing"</span>: {
+    <span class="code-key">"type"</span>: <span class="code-string">"Price"</span>,
+    <span class="code-key">"location"</span>: <span class="code-string">"crates/domain/src/money.rs:8"</span>,
+    <span class="code-key">"prelude_path"</span>: <span class="code-string">"domain::prelude::Price"</span>,
+    <span class="code-key">"traits"</span>: [<span class="code-string">"CurrencyFormat"</span>, <span class="code-string">"Add"</span>, <span class="code-string">"Display"</span>],
+    <span class="code-key">"note"</span>: <span class="code-string">"Newtype over u64 representing cents. Already implements CurrencyFormat for IDR display."</span>
+  }
+}</pre>
+
+  <h4>Tool 3: validate_boundary — "Is this in the right module?"</h4>
+  <p>Planned action: <code>CREATE fn fetch_order_by_id in crates/domain/src/order.rs</code></p>
+
+  <pre>{
+  <span class="code-key">"action"</span>: <span class="code-string">"create_function"</span>,
+  <span class="code-key">"symbol"</span>: <span class="code-string">"fetch_order_by_id"</span>,
+  <span class="code-key">"advisory"</span>: <span class="code-string">"BOUNDARY_VIOLATION"</span>,
+  <span class="code-key">"violation"</span>: {
+    <span class="code-key">"rule"</span>: <span class="code-string">"No infrastructure concerns (DB, HTTP, filesystem)"</span>,
+    <span class="code-key">"rule_kind"</span>: <span class="code-string">"must_not"</span>,
+    <span class="code-key">"crate"</span>: <span class="code-string">"domain"</span>,
+    <span class="code-key">"reason"</span>: <span class="code-string">"Database query is an infrastructure concern"</span>
+  },
+  <span class="code-key">"suggestion"</span>: {
+    <span class="code-key">"target"</span>: <span class="code-string">"crates/infra/src/repositories/order_repo.rs"</span>,
+    <span class="code-key">"pattern"</span>: <span class="code-string">"Define a trait in domain, implement in infra"</span>
+  }
+}</pre>
+
+  <h4>Tool 4: check_wip — "Is someone else working here?"</h4>
+  <p>Planned action: <code>MODIFY fn execute_settlement in crates/trading/src/execution.rs</code></p>
+
+  <pre>{
+  <span class="code-key">"action"</span>: <span class="code-string">"modify_function"</span>,
+  <span class="code-key">"module"</span>: <span class="code-string">"crates/trading/src/execution.rs"</span>,
+  <span class="code-key">"advisory"</span>: <span class="code-string">"WIP_CONFLICT"</span>,
+  <span class="code-key">"conflict"</span>: {
+    <span class="code-key">"agent"</span>: <span class="code-string">"agent-2"</span>,
+    <span class="code-key">"branch"</span>: <span class="code-string">"feat/settlement-v2"</span>,
+    <span class="code-key">"symbols_in_progress"</span>: [<span class="code-string">"execute_settlement"</span>, <span class="code-string">"validate_settlement_params"</span>],
+    <span class="code-key">"last_activity"</span>: <span class="code-string">"12 minutes ago"</span>
+  },
+  <span class="code-key">"recommendation"</span>: <span class="code-string">"ESCALATE_TO_HUMAN — coordination decision required"</span>
+}</pre>
+
+  <h4>Tool 5: suggest_reuse — "Here's the idiomatic path"</h4>
+  <p>Planned action: <code>IMPLEMENT feature: format order total for display</code></p>
+
+  <pre>{
+  <span class="code-key">"action"</span>: <span class="code-string">"implement_feature"</span>,
+  <span class="code-key">"description"</span>: <span class="code-string">"format order total for display"</span>,
+  <span class="code-key">"advisory"</span>: <span class="code-string">"REUSE_WITH_PATTERN"</span>,
+  <span class="code-key">"suggestion"</span>: {
+    <span class="code-key">"use_trait"</span>: <span class="code-string">"domain::CurrencyFormat"</span>,
+    <span class="code-key">"call_pattern"</span>: <span class="code-string">"order.total.format_idr()"</span>,
+    <span class="code-key">"example_location"</span>: <span class="code-string">"crates/trading/src/reports.rs:67"</span>,
+    <span class="code-key">"import"</span>: <span class="code-string">"use domain::prelude::CurrencyFormat;"</span>
+  }
+}</pre>
+
+  <h3>Advisory Resolution Summary</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Advisory</th><th>AI Action</th><th>Human?</th><th>Frequency (est.)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>SAFE_TO_CREATE</code></td><td>Proceed</td><td>No</td><td>~40%</td></tr>
+        <tr><td><code>REUSE_EXISTING</code></td><td>Revise → use existing</td><td>No</td><td>~25%</td></tr>
+        <tr><td><code>USE_EXISTING_TYPE</code></td><td>Revise → import</td><td>No</td><td>~15%</td></tr>
+        <tr><td><code>REUSE_WITH_PATTERN</code></td><td>Revise → follow pattern</td><td>No</td><td>~8%</td></tr>
+        <tr><td><code>BOUNDARY_VIOLATION</code></td><td>Revise → correct module</td><td>No</td><td>~5%</td></tr>
+        <tr><td><code>WIP_CONFLICT</code></td><td><strong>Pause → escalate</strong></td><td>Yes</td><td>~4%</td></tr>
+        <tr><td><code>AMBIGUOUS_MATCH</code></td><td><strong>Present options</strong></td><td>Yes</td><td>~3%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Roughly 93% of advisories are auto-resolved — the AI revises its plan without human involvement. The human is only consulted for coordination decisions and genuine ambiguity.
+  </p>
+
+  <h3>The Quadripartite Model</h3>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph LR
+    A["🧠 Architect\n(Human)"] -->|"Intent"| B["📋 Plan Mode\n(AI plans)"]
+    B -->|"Structured\nactions"| C["🔍 Oracle\n(MCP Validator)"]
+    C -->|"Advisories"| D["📋 Revised\nPlan"]
+    D -->|"Informed"| E["⌨️ Typist\n(AI executes)"]
+    E -->|"Code"| F["🔒 Verifier\n(rustc)"]
+    F -->|"Compile err"| E
+    F -->|"✓"| G["⚙️ Runtime"]
+    G -->|"Logic bug"| A
+    C -->|"WIP /\nambiguous"| A
+
+    style A fill:#2d6a4f,color:#fff,stroke:#1b4332
+    style B fill:#6c757d,color:#fff
+    style C fill:#e9c46a,color:#000,stroke:#c9a227,stroke-width:3px
+    style D fill:#2a9d8f,color:#fff
+    style E fill:#e76f51,color:#fff,stroke:#c45e3e
+    style F fill:#264653,color:#fff,stroke:#1d3640
+    style G fill:#6c757d,color:#fff
+    </pre>
+    <div class="diagram-caption">Fig 4 — The four-node model. The Oracle holds the minimap. The AI still operates under fog of war, but consults the oracle before every move.</div>
+  </div>
+
+
+  <div class="section-marker" id="registry">11 — Persistent Memory</div>
+  <h2>The Architecture Registry — Schema, Queries, and Lifecycle</h2>
+
+  <p>
+    The Oracle needs something to query. An oracle over an empty index is useless; one that indexes the entire codebase is a slower <code>grep</code>. The value is in the middle: a <strong>structural metadata layer</strong> that knows what exists, who owns it, and how things relate — without storing implementation. Think of it as a building's blueprint registry: what was built where, what connects to what, what's under construction. Not the bricks.
+  </p>
+
+  <h3>The Schema</h3>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+erDiagram
+    CRATE {
+        text name PK
+        text path
+        text purpose
+        text status
+        text bounded_context
+    }
+    MODULE {
+        text path PK
+        text crate_name FK
+        text purpose
+        text status
+    }
+    SYMBOL {
+        integer id PK
+        text name
+        text kind
+        text signature
+        text module_path FK
+        text visibility
+        text status
+        text created_by
+    }
+    RELATIONSHIP {
+        integer id PK
+        integer source_symbol FK
+        integer target_symbol FK
+        text kind
+    }
+    CONTRACT {
+        integer id PK
+        text trait_name
+        text implementor
+        text module_path FK
+    }
+    OWNERSHIP_RULE {
+        integer id PK
+        text crate_name FK
+        text rule
+        text kind
+    }
+    CRATE ||--o{ MODULE : contains
+    MODULE ||--o{ SYMBOL : defines
+    SYMBOL ||--o{ RELATIONSHIP : source
+    SYMBOL ||--o{ RELATIONSHIP : target
+    CRATE ||--o{ OWNERSHIP_RULE : governs
+    MODULE ||--o{ CONTRACT : contains
+    </pre>
+    <div class="diagram-caption">Fig 5 — Six tables. Stores signatures, not bodies. A 50,000-line codebase produces ~500 rows (~300 KB).</div>
+  </div>
+
+  <h3>The Queries the Oracle Actually Runs</h3>
+
+  <p>
+    Each MCP tool maps to one or more SQL queries against this schema. These are the actual queries, not abstractions:
+  </p>
+
+  <h4>validate_creation → fuzzy symbol lookup</h4>
+  <pre><span class="code-keyword">SELECT</span> s.name, s.kind, s.signature, s.module_path,
+       s.visibility, s.status, s.created_by
+<span class="code-keyword">FROM</span> symbol s
+<span class="code-keyword">WHERE</span> s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%settlement_fee%'</span>
+   <span class="code-keyword">OR</span> s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%calculate_fee%'</span>;
+<span class="code-comment">-- Returns: calculate_fee, fn, pub, stable, crates/trading/src/fees.rs:42</span></pre>
+
+  <h4>validate_dependency → trait/type capability lookup</h4>
+  <pre><span class="code-keyword">SELECT</span> s.name, s.signature, s.module_path, c.bounded_context
+<span class="code-keyword">FROM</span> symbol s
+<span class="code-keyword">JOIN</span> module m <span class="code-keyword">ON</span> s.module_path = m.path
+<span class="code-keyword">JOIN</span> crate c <span class="code-keyword">ON</span> m.crate_name = c.name
+<span class="code-keyword">WHERE</span> s.kind <span class="code-keyword">IN</span> (<span class="code-string">'struct'</span>, <span class="code-string">'trait'</span>)
+  <span class="code-keyword">AND</span> (s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%Currency%'</span> <span class="code-keyword">OR</span> s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%Price%'</span> <span class="code-keyword">OR</span> s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%Amount%'</span>);
+<span class="code-comment">-- Returns: Price, struct, domain; CurrencyFormat, trait, domain</span></pre>
+
+  <h4>validate_boundary → ownership rule check</h4>
+  <pre><span class="code-keyword">SELECT</span> rule, kind
+<span class="code-keyword">FROM</span> ownership_rule
+<span class="code-keyword">WHERE</span> crate_name = <span class="code-string">'domain'</span> <span class="code-keyword">AND</span> kind = <span class="code-string">'must_not'</span>;
+<span class="code-comment">-- Returns: "No infrastructure concerns (DB, HTTP, filesystem)"</span></pre>
+
+  <h4>check_wip → in-progress symbol scan</h4>
+  <pre><span class="code-keyword">SELECT</span> s.name, s.status, s.created_by, s.updated_at
+<span class="code-keyword">FROM</span> symbol s
+<span class="code-keyword">WHERE</span> s.module_path = <span class="code-string">'crates/trading/src/execution.rs'</span>
+  <span class="code-keyword">AND</span> s.status <span class="code-keyword">IN</span> (<span class="code-string">'planned'</span>, <span class="code-string">'wip'</span>);
+<span class="code-comment">-- Returns: execute_settlement, wip, agent-2, 12 min ago</span></pre>
+
+  <h4>suggest_reuse → capability + contract lookup</h4>
+  <pre><span class="code-keyword">SELECT</span> s.name, s.signature, s.module_path,
+       c.trait_name, c.implementor
+<span class="code-keyword">FROM</span> symbol s
+<span class="code-keyword">LEFT JOIN</span> contract c <span class="code-keyword">ON</span> s.module_path = c.module_path
+<span class="code-keyword">WHERE</span> s.kind = <span class="code-string">'fn'</span>
+  <span class="code-keyword">AND</span> s.visibility <span class="code-keyword">IN</span> (<span class="code-string">'pub'</span>, <span class="code-string">'pub_crate'</span>)
+  <span class="code-keyword">AND</span> s.name <span class="code-keyword">LIKE</span> <span class="code-string">'%format%'</span>;
+<span class="code-comment">-- Returns: format_idr, CurrencyFormat trait, impl for Price</span></pre>
+
+  <p>
+    All queries return in under 2ms against the expected data volume. The MCP server formats results into the JSON advisories shown in §10.
+  </p>
+
+  <h3>Three Population Triggers</h3>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph LR
+    subgraph T1["🧠 Trigger 1: Human Seed\n(Day 0)"]
+        T1A["Cargo.toml → crates\nseed.sql → rules"]
+    end
+    subgraph T2["📋 Trigger 2: Post-Plan\n(before code)"]
+        T2A["Approved plan →\nPLANNED symbols\n+ agent ID"]
+    end
+    subgraph T3["🏗️ Trigger 3: Post-Compile\n(after cargo build)"]
+        T3A["cargo metadata →\nsignatures, traits,\nimpl blocks, pub use"]
+    end
+
+    T1 --> DB["📦 registry.db"]
+    T2 --> DB
+    T3 --> DB
+
+    style T1 fill:#264653,color:#fff
+    style T2 fill:#2a9d8f,color:#fff
+    style T3 fill:#2d6a4f,color:#fff
+    style DB fill:#e9c46a,color:#000,stroke:#c9a227,stroke-width:3px
+    </pre>
+    <div class="diagram-caption">Fig 6 — Three triggers, each firing at a different moment in the development cycle.</div>
+  </div>
+
+  <h4>Trigger 1: Human Seed (Day 0, ~5 minutes)</h4>
+  <p>
+    Before any code exists, the architect seeds crate definitions and ownership rules:
+  </p>
+
+  <pre>arch-registry init --workspace ./Cargo.toml
+arch-registry add-rule domain <span class="code-string">"No infrastructure concerns"</span>       --kind must_not
+arch-registry add-rule domain <span class="code-string">"All types use newtype pattern"</span>      --kind must
+arch-registry add-rule trading <span class="code-string">"Consume domain::Price, not own type"</span> --kind must</pre>
+
+  <p>
+    Result: 5 crates, 3–5 rules, 0 symbols. The oracle can already catch boundary violations before any function exists.
+  </p>
+
+  <h4>Trigger 2: Post-Plan Registration (before code is written)</h4>
+  <p>
+    When a plan is approved, planned symbols are registered with status <code>planned</code>. This is the <strong>namespace reservation</strong> that prevents duplicate planning by concurrent agents. If agent-2 plans a function that agent-1 already registered, the oracle returns <code>WIP_CONFLICT</code>.
+  </p>
+
+  <h4>Trigger 3: Post-Compile Sync (after successful build)</h4>
+  <p>
+    After <code>cargo build</code>, a lightweight indexer syncs the registry. The critical detail: <strong>it parses <code>cargo metadata</code> output and runs targeted <code>syn</code>-based extraction on changed files only</strong> — not a full codebase parse. It extracts:
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Extracted</th><th>Source</th><th>Not Extracted</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Function signatures (<code>pub fn name(params) -&gt; Return</code>)</td><td><code>fn</code> declarations</td><td>Function bodies</td></tr>
+        <tr><td>Type definitions (<code>struct</code>, <code>enum</code>, <code>type</code>)</td><td>Item declarations</td><td>Impl block internals</td></tr>
+        <tr><td>Trait contracts (method signatures)</td><td><code>trait</code> blocks</td><td>Default implementations</td></tr>
+        <tr><td>Trait implementations (<code>impl Trait for Type</code>)</td><td><code>impl</code> blocks</td><td>Method bodies</td></tr>
+        <tr><td>Re-exports (<code>pub use</code>)</td><td>Prelude files</td><td>Internal <code>use</code> statements</td></tr>
+        <tr><td>Cross-crate dependencies</td><td><code>Cargo.toml</code> deps</td><td>Transitive deps</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The <code>planned → stable</code> transition is automatic: post-compile sync matches real symbols to planned rows, updates status, and backfills finalized signature details.
+  </p>
+
+  <h3>File System Layout</h3>
+  <pre>.architect/
+├── seed.sql          <span class="code-comment"># committed — human-authored decisions, diffable, reviewable</span>
+├── registry.db       <span class="code-comment"># gitignored — rebuilt from source + seed on checkout</span>
+└── sync.log          <span class="code-comment"># gitignored — last sync timestamp</span></pre>
+
+  <p>
+    Ownership rules and crate purposes are versioned as code. The symbol index is derived metadata, rebuilt fresh. No binary merge conflicts, always consistent with actual source.
+  </p>
+
+
+  <div class="section-marker" id="evolved-ladder">12 — The Complete System</div>
+  <h2>The Evolved Defense Ladder</h2>
+
+  <p>
+    With the Oracle and Registry in place, the initial L0–L6 ladder is updated. The new layers slot between the old ones, and some old layers are superseded:
+  </p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph TD
+    CODE["AI Plan"] --> ORACLE
+    ORACLE["🔍 Oracle Validation\n(pre-execution)"] -->|"SAFE / REUSE /\nREVISE advisories"| PLAN["Revised Plan"]
+    PLAN --> EXEC["AI Executes"]
+    EXEC --> L0["L0 — rustc\nMemory · Types · Concurrency"]
+    L0 --> L1["L1 — Newtypes + Typestate\nSemantic type confusion"]
+    L1 --> L2["L2 — clippy + cargo udeps\nAnti-patterns, dead code"]
+    L2 --> SYNC["Post-Compile Registry Sync"]
+    SYNC --> REVIEW["Human Review\n(business logic only)"]
+    REVIEW --> DONE["✅ Production"]
+
+    ORACLE -.->|"WIP_CONFLICT"| HUMAN["🧠 Human\nEscalation"]
+    HUMAN -.-> PLAN
+
+    style CODE fill:#6c757d,color:#fff
+    style ORACLE fill:#e9c46a,color:#000,stroke:#c9a227,stroke-width:3px
+    style PLAN fill:#2a9d8f,color:#fff
+    style EXEC fill:#e76f51,color:#fff
+    style L0 fill:#264653,color:#fff
+    style L1 fill:#2d6a4f,color:#fff
+    style L2 fill:#4a6741,color:#fff
+    style SYNC fill:#7b6d3e,color:#fff
+    style REVIEW fill:#5c3d6e,color:#fff
+    style DONE fill:#2d6a4f,color:#fff
+    style HUMAN fill:#2d6a4f,color:#fff
+    </pre>
+    <div class="diagram-caption">Fig 7 — The evolved pipeline. The Oracle validates before execution. rustc validates after. The human reviews only business logic.</div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>Layer</th><th>Verifier</th><th>Catches</th><th>Nature</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td rowspan="5" style="border-right: 2px solid var(--accent-yellow); font-weight: 600; color: var(--accent-yellow);">Pre-<br>Execution</td>
+          <td>Oracle: validate_creation</td>
+          <td>Registry + codebase search</td>
+          <td>Duplicate functions and types</td>
+          <td>Automated</td>
+        </tr>
+        <tr>
+          <td>Oracle: validate_dependency</td>
+          <td>Registry symbol lookup</td>
+          <td>Reinventing existing types/traits</td>
+          <td>Automated</td>
+        </tr>
+        <tr>
+          <td>Oracle: validate_boundary</td>
+          <td>Ownership rules</td>
+          <td>DDD boundary violations</td>
+          <td>Automated</td>
+        </tr>
+        <tr>
+          <td>Oracle: check_wip</td>
+          <td>Registry + git state</td>
+          <td>Multi-agent conflicts</td>
+          <td>Semi-auto (escalates)</td>
+        </tr>
+        <tr>
+          <td>Oracle: suggest_reuse</td>
+          <td>Registry + contracts</td>
+          <td>Suboptimal implementation paths</td>
+          <td>Automated</td>
+        </tr>
+        <tr>
+          <td rowspan="3" style="border-right: 2px solid var(--accent-blue); font-weight: 600; color: var(--accent-blue);">Post-<br>Execution</td>
+          <td>L0: rustc</td>
+          <td>Compiler</td>
+          <td>Memory, ownership, types, concurrency</td>
+          <td>Automatic</td>
+        </tr>
+        <tr>
+          <td>L1: Newtypes + Typestate</td>
+          <td>Compiler (type system)</td>
+          <td>Semantic type confusion, invalid transitions</td>
+          <td>Automatic</td>
+        </tr>
+        <tr>
+          <td>L2: clippy + cargo udeps</td>
+          <td>Linter</td>
+          <td>Anti-patterns, dead code hinting at duplication</td>
+          <td>Semi-automatic</td>
+        </tr>
+        <tr>
+          <td style="border-right: 2px solid var(--accent-green); font-weight: 600; color: var(--accent-green);">Post-<br>Build</td>
+          <td>Registry sync</td>
+          <td>Post-compile hook</td>
+          <td>Keeps registry current; transitions planned → stable</td>
+          <td>Automatic</td>
+        </tr>
+        <tr>
+          <td style="border-right: 2px solid var(--accent-purple); font-weight: 600; color: var(--accent-purple);">Human</td>
+          <td>Architectural review</td>
+          <td>Human judgment</td>
+          <td>Business logic, intent alignment, novel decisions</td>
+          <td>Manual — focused</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout callout-insight">
+    <p>The key shift: the old L4 (CLAUDE.md manifest) and L5 (grep check) are <strong>subsumed</strong> by the Oracle's pre-execution validation. They still exist as fallback documentation, but the Oracle is the primary enforcement. The human review layer narrows from "check everything" to "check business logic only."</p>
+  </div>
+
+
+  <!-- ============================================ -->
+  <!-- PART V — ASSESSMENT                          -->
+  <!-- ============================================ -->
+  <div class="part-header">
+    <div class="part-label">Part V</div>
+    <h2>Assessment</h2>
+    <p>Economics, residual risk, and the direction forward.</p>
+  </div>
+
+
+  <div class="section-marker" id="cost">13 — Economics</div>
+  <h2>Cost Analysis</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Cost Center</th><th>No Guardrails</th><th>Rust + Manifest</th><th>+ Oracle + Registry</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Structural bug hunting</strong></td><td>Ongoing, per-task</td><td>Zero (compiler)</td><td>Zero (compiler)</td></tr>
+        <tr><td><strong>Semantic bug hunting</strong></td><td>Ongoing, hard to spot</td><td>Near-zero (newtypes)</td><td>Near-zero (newtypes)</td></tr>
+        <tr><td><strong>Architectural review</strong></td><td>Expensive, quadratic</td><td>Reduced (manifest)</td><td>Greatly reduced (oracle prevents at plan stage)</td></tr>
+        <tr><td><strong>Context prep per task</strong></td><td>~2000 tokens</td><td>~250 tokens</td><td>~50 tokens (oracle provides JIT advisories)</td></tr>
+        <tr><td><strong>Duplicate detection</strong></td><td>Human review only</td><td>Keyword grep</td><td>Multi-convention, scope-aware, proactive</td></tr>
+        <tr><td><strong>Multi-agent coordination</strong></td><td>Manual chat</td><td>Manual chat</td><td>Semi-automatic (registry WIP tracking)</td></tr>
+        <tr><td><strong>Upfront investment</strong></td><td>Low</td><td>Medium</td><td>Higher (types, traits, registry, MCP, seed)</td></tr>
+        <tr><td><strong>Break-even point</strong></td><td>—</td><td>~5K lines</td><td>~10K lines</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pull-quote">
+    <p>The trade: upfront design cost for near-elimination of ongoing verification cost. In a workflow generating thousands of lines per week, this is overwhelmingly favorable.</p>
+  </div>
+
+
+  <div class="section-marker" id="residual">14 — The Residual</div>
+  <h2>What Still Requires Human Eyes</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Residual Defect</th><th>Example</th><th>Why No Guardrail Catches It</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Wrong business logic</strong></td><td>Discount is 15% instead of 20%</td><td>Types correct, logic consistent — doesn't match requirements</td></tr>
+        <tr><td><strong>Wrong API contract</strong></td><td>External API returns cents, caller treats as whole currency</td><td>Newtypes help internally; external APIs return raw types</td></tr>
+        <tr><td><strong>Architectural misfit</strong></td><td>Flat struct where a state machine is needed</td><td>Compiles fine; requires judgment about modeling fitness</td></tr>
+        <tr><td><strong>Performance pathology</strong></td><td>O(n³) where O(n log n) is possible</td><td>Safe Rust prevents <em>unsafe</em>, not <em>slow</em></td></tr>
+        <tr><td><strong>Missing requirements</strong></td><td>AI builds exactly what was asked, but the ask was incomplete</td><td>No system catches what was never stated</td></tr>
+        <tr><td><strong>Registry drift</strong></td><td>Seed rules reference refactored-away functions</td><td>Human-authored docs require human maintenance</td></tr>
+        <tr><td><strong>Novel architecture</strong></td><td>Should this feature be its own crate?</td><td>The Architect's core job — no oracle replaces it</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    This residual is qualitatively different from the automated-away defects. Structural, semantic, and architectural defects are <em>mechanical</em> failures from the AI's context limitations. The residual defects are <em>judgment</em> failures requiring business understanding and domain expertise.
+  </p>
+
+  <div class="callout callout-insight">
+    <p><strong>The shift is from verification to validation.</strong> Verification — did we build it correctly? — is increasingly automated by the compiler, type system, and oracle. Validation — did we build the correct thing? — remains the human's irreducible contribution, and exactly where domain expertise is most valuable.</p>
+  </div>
+
+
+  <div class="section-marker" id="closing">15 — Closing</div>
+  <h2>From Compiler Bouncer to Institutional Memory</h2>
+
+  <p>
+    The system evolved through four phases, each solving a gap the previous one revealed:
+  </p>
+
+  <div class="diagram-container">
+    <pre class="mermaid">
+graph LR
+    P1["Phase 1\nCompiler\nFirewall"] -->|"structural ✓\nsemantic ✗"| P2["Phase 2\nNewtype +\nTypestate"]
+    P2 -->|"semantic ✓\narchitectural ✗"| P3["Phase 3\nManifest +\nEnforcement"]
+    P3 -->|"reactive —\ndamage before\ndetection"| P4["Phase 4\nOracle +\nRegistry"]
+
+    style P1 fill:#264653,color:#fff
+    style P2 fill:#2a9d8f,color:#fff
+    style P3 fill:#2d6a4f,color:#fff
+    style P4 fill:#e9c46a,color:#000,stroke:#c9a227,stroke-width:2px
+    </pre>
+    <div class="diagram-caption">Fig 8 — Four phases. Each solves the gap revealed by the previous one.</div>
+  </div>
+
+  <p>
+    The Minesweeper metaphor evolved with the system. We started with "make the mines self-announcing" — use the compiler to reject invalid steps. We progressed to "give the AI a minimap" — manifests and discovery tools. We arrived at "build institutional memory" — a persistent, growing registry that ensures no agent operates in complete darkness.
+  </p>
+  <p>
+    The registry is the board. Not in the AI's head, not in a 2,000-token prompt, not in prose documentation. In a structured, indexed, incrementally-built database that any agent can query, any hook can update, and the architect governs through versioned seed rules. Each newtype is a mine made self-announcing. Each trait contract is an uncrossable boundary. Each registry entry is a tile permanently cleared from the fog of war.
+  </p>
+
+  <div class="pull-quote">
+    <p>Guardrails ensure the AI does things right. The human ensures we build the right thing.</p>
+  </div>
+
+  <div class="divider"></div>
+
+</div>
+
+<footer class="article-footer">
+  <p>Written from a year of practice building production systems with AI-assisted Rust development. The MCP Oracle and Architecture Registry represent the current frontier, actively being refined through implementation.</p>
+  <p>External reference: <a href="https://github.com/mirzalazuardi/codetracer" style="color: var(--accent-blue);">codetracer</a> by Mirza Lazuardi provided independent validation of the discovery-layer thesis.</p>
+  <p>Diagrams rendered with Mermaid. No AI was harmed in the compilation of this article — though several of its outputs were rejected by <code>rustc</code>, and at least one plan was revised by the oracle.</p>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      primaryColor: '#264653',
+      primaryTextColor: '#d4d8e0',
+      primaryBorderColor: '#333a48',
+      lineColor: '#5c6370',
+      secondaryColor: '#2a9d8f',
+      tertiaryColor: '#1a1e27',
+      noteTextColor: '#d4d8e0',
+      noteBkgColor: '#1a1e27',
+      fontFamily: 'Source Sans 3, sans-serif',
+      fontSize: '13px',
+      edgeLabelBackground: '#13161c'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16, nodeSpacing: 40, rankSpacing: 50 }
+  });
+</script>
+
+</body>
+</html>

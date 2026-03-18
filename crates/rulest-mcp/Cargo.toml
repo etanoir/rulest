@@ -1,0 +1,11 @@
+[package]
+name = "rulest-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rulest-core = { path = "../rulest-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["io-std", "io-util", "rt", "macros"] }
