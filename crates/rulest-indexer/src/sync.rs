@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-use rulest_core::models::{Module, Symbol, SymbolStatus};
+use rulest_core::models::{Module, Symbol, SymbolKind, SymbolStatus, Visibility};
 use rulest_core::registry;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -116,15 +116,21 @@ pub fn sync_workspace(
             let module_id = registry::insert_module(conn, &module)
                 .map_err(|e| format!("Failed to insert module '{}': {}", module_info.path, e))?;
 
+            // Preserve planned/wip symbols before clearing
+            let preserved_symbols = query_planned_wip_symbols(conn, module_id)
+                .map_err(|e| format!("Failed to query planned/wip symbols: {}", e))?;
+
             // Delete existing symbols for this module (will re-insert)
             let removed = registry::delete_symbols_for_module(conn, module_id)
                 .map_err(|e| format!("Failed to clear symbols: {}", e))?;
             stats.symbols_removed += removed;
 
             // Extract symbols from source
+            let mut extracted_names: HashSet<String> = HashSet::new();
             match extractor::extract_symbols(&file_path) {
                 Ok(extracted) => {
                     for sym in extracted.symbols {
+                        extracted_names.insert(sym.name.clone());
                         let symbol = Symbol {
                             id: None,
                             module_id,
@@ -146,6 +152,17 @@ pub fn sync_workspace(
                 }
             }
 
+            // Re-insert planned/wip symbols that haven't been implemented yet
+            for sym in &preserved_symbols {
+                if !extracted_names.contains(&sym.name) {
+                    registry::insert_symbol(conn, sym)
+                        .map_err(|e| format!("Failed to re-insert planned/wip symbol: {}", e))?;
+                    // These symbols were removed then re-added, net zero change;
+                    // adjust stats to not count them as removed.
+                    stats.symbols_removed -= 1;
+                }
+            }
+
             // Update sync log
             sync_log.files.insert(module_info.path.clone(), mtime);
         }
@@ -162,4 +179,38 @@ fn file_mtime(path: &Path) -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Query all planned/wip symbols for a module so they can be preserved across sync.
+fn query_planned_wip_symbols(
+    conn: &Connection,
+    module_id: i64,
+) -> Result<Vec<Symbol>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, module_id, name, kind, visibility, signature, status, created_by, created_at \
+         FROM symbols WHERE module_id = ?1 AND status IN ('planned', 'wip')",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![module_id], |row| {
+        let kind_str: String = row.get(3)?;
+        let vis_str: String = row.get(4)?;
+        let status_str: String = row.get(6)?;
+        Ok(Symbol {
+            id: None, // Will be re-inserted with a new id
+            module_id: row.get(1)?,
+            name: row.get(2)?,
+            kind: kind_str
+                .parse::<SymbolKind>()
+                .unwrap_or(SymbolKind::Function),
+            visibility: vis_str
+                .parse::<Visibility>()
+                .unwrap_or(Visibility::Private),
+            signature: row.get(5)?,
+            status: status_str
+                .parse::<SymbolStatus>()
+                .unwrap_or(SymbolStatus::Planned),
+            created_by: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    })?;
+    rows.collect()
 }

@@ -98,7 +98,8 @@ pub fn tool_definitions() -> Vec<Value> {
                                 "action": { "type": "string", "description": "create or modify" },
                                 "symbol": { "type": "string", "description": "Symbol name" },
                                 "target": { "type": "string", "description": "Target file path" },
-                                "crate_name": { "type": "string", "description": "Target crate name (optional)" }
+                                "crate_name": { "type": "string", "description": "Target crate name (optional)" },
+                                "kind": { "type": "string", "description": "Symbol kind: function, struct, enum, trait, type_alias, const, static, macro (optional, defaults to function)" }
                             },
                             "required": ["action", "symbol", "target"]
                         },

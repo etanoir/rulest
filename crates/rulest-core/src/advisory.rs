@@ -35,6 +35,9 @@ pub struct PlannedAction {
     pub target: String,
     /// Target crate name (e.g. "trading"), derived from target path
     pub crate_name: Option<String>,
+    /// Symbol kind hint: "function", "struct", "enum", "trait", etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 /// Result of validating a single planned action.

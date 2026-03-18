@@ -58,12 +58,14 @@ Do not place symbols here that belong to other crates.
 "#;
 
 const SETTINGS_JSON: &str = r#"{
-  "deny": [
-    "Edit **/prelude.rs without checking validate_creation first",
-    "Edit **/mod.rs without checking validate_boundary first",
-    "Edit **/lib.rs without checking validate_boundary first",
-    "Create new public types without checking validate_dependency first"
-  ]
+  "permissions": {
+    "deny": [
+      "Edit(crates/{{crate_name}}/src/**)",
+      "Edit(**/prelude.rs)",
+      "Edit(**/mod.rs)",
+      "Edit(**/lib.rs)"
+    ]
+  }
 }
 "#;
 

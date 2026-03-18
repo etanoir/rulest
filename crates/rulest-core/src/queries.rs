@@ -302,7 +302,11 @@ pub fn register_plan(
             }
         };
 
-        let kind = crate::models::SymbolKind::Function; // default for planned symbols
+        let kind = action
+            .kind
+            .as_deref()
+            .and_then(|k| k.parse::<crate::models::SymbolKind>().ok())
+            .unwrap_or(crate::models::SymbolKind::Function);
         let status = if action.action == "create" {
             crate::models::SymbolStatus::Planned
         } else {

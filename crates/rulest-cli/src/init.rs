@@ -35,8 +35,15 @@ pub fn run(workspace_path: &str) -> Result<(), String> {
             .map_err(|e| format!("Failed to insert crate '{}': {}", c.name, e))?;
     }
 
-    // Generate initial seed.sql
-    if !seed_path.exists() {
+    // If seed.sql already exists (e.g. cloned repo), execute it against the fresh database.
+    // Otherwise, generate a starter template.
+    if seed_path.exists() {
+        let sql = fs::read_to_string(&seed_path)
+            .map_err(|e| format!("Failed to read seed.sql: {}", e))?;
+        registry::execute_sql(&conn, &sql)
+            .map_err(|e| format!("Failed to execute seed.sql: {}", e))?;
+        println!("Loaded existing seed.sql into registry");
+    } else {
         let mut seed = String::from("-- Architecture ownership rules for this workspace\n");
         seed.push_str("-- Add rules with: rulest add-rule <crate> <description> --kind <must_own|must_not|shared_with>\n\n");
 

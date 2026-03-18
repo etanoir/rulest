@@ -6,7 +6,7 @@ Core registry schema, models, queries, and advisory types for rulest
 
 ## Dependencies
 
-This crate depends on: TODO: list dependencies
+This crate depends on: rusqlite, serde, serde_json, thiserror
 
 ## Ownership
 

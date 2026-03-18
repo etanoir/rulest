@@ -6,7 +6,7 @@ syn-based source code indexer for rulest architecture registry
 
 ## Dependencies
 
-This crate depends on: TODO: list dependencies
+This crate depends on: syn, quote, cargo_metadata, walkdir, serde, serde_json, rusqlite, rulest-core
 
 ## Ownership
 

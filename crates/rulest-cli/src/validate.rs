@@ -75,15 +75,23 @@ fn parse_plan(content: &str) -> Result<Vec<PlannedAction>, String> {
         let rest = rest.trim();
 
         // Strip optional kind prefix (fn, struct, enum, trait, type, const)
-        let rest = rest
-            .strip_prefix("fn ")
-            .or_else(|| rest.strip_prefix("struct "))
-            .or_else(|| rest.strip_prefix("enum "))
-            .or_else(|| rest.strip_prefix("trait "))
-            .or_else(|| rest.strip_prefix("type "))
-            .or_else(|| rest.strip_prefix("const "))
-            .unwrap_or(rest)
-            .trim();
+        // and capture the kind for the PlannedAction
+        let (kind_hint, rest) = if let Some(stripped) = rest.strip_prefix("fn ") {
+            (Some("function".to_string()), stripped)
+        } else if let Some(stripped) = rest.strip_prefix("struct ") {
+            (Some("struct".to_string()), stripped)
+        } else if let Some(stripped) = rest.strip_prefix("enum ") {
+            (Some("enum".to_string()), stripped)
+        } else if let Some(stripped) = rest.strip_prefix("trait ") {
+            (Some("trait".to_string()), stripped)
+        } else if let Some(stripped) = rest.strip_prefix("type ") {
+            (Some("type_alias".to_string()), stripped)
+        } else if let Some(stripped) = rest.strip_prefix("const ") {
+            (Some("const".to_string()), stripped)
+        } else {
+            (None, rest)
+        };
+        let rest = rest.trim();
 
         // Split on " in: " or " in "
         let (symbol, target) = if let Some(idx) = rest.find(" in: ") {
@@ -106,6 +114,7 @@ fn parse_plan(content: &str) -> Result<Vec<PlannedAction>, String> {
             symbol: symbol.to_string(),
             target: target.to_string(),
             crate_name,
+            kind: kind_hint,
         });
     }
 
@@ -141,9 +150,12 @@ MODIFY: fn execute_settlement in: crates/trading/src/settlement.rs
         assert_eq!(actions[0].symbol, "calculate_settlement_fee");
         assert_eq!(actions[0].target, "crates/trading/src/fees.rs");
         assert_eq!(actions[0].crate_name, Some("trading".to_string()));
+        assert_eq!(actions[0].kind, Some("function".to_string()));
         assert_eq!(actions[1].symbol, "CurrencyAmount");
         assert_eq!(actions[1].crate_name, Some("domain".to_string()));
+        assert_eq!(actions[1].kind, Some("struct".to_string()));
         assert_eq!(actions[2].action, "modify");
+        assert_eq!(actions[2].kind, Some("function".to_string()));
     }
 
     #[test]

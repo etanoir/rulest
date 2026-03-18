@@ -55,28 +55,31 @@ pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
 
         let id = request.get("id").cloned();
         let method = request["method"].as_str().unwrap_or("");
+        let is_notification = id.is_none() || id.as_ref() == Some(&Value::Null);
 
         let response = match method {
-            "initialize" => handle_initialize(id),
-            "notifications/initialized" => continue, // No response needed
-            "tools/list" => handle_tools_list(id),
+            "initialize" => Some(handle_initialize(id)),
+            "tools/list" => Some(handle_tools_list(id)),
             "tools/call" => {
                 let params = request.get("params").cloned().unwrap_or(json!({}));
-                handle_tools_call(id, &params, &conn)
+                Some(handle_tools_call(id, &params, &conn))
             }
+            _ if is_notification => None, // Notifications get no response per JSON-RPC 2.0
             _ => {
-                json!({
+                Some(json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "error": {
                         "code": -32601,
                         "message": format!("Method not found: {}", method)
                     }
-                })
+                }))
             }
         };
 
-        write_response(&mut stdout, &response).await?;
+        if let Some(ref resp) = response {
+            write_response(&mut stdout, resp).await?;
+        }
     }
 
     Ok(())
@@ -119,6 +122,8 @@ fn handle_tools_call(
 
     let result = tools::call_tool(conn, tool_name, &arguments);
 
+    let is_error = result.get("error").is_some();
+
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -128,7 +133,8 @@ fn handle_tools_call(
                     "type": "text",
                     "text": serde_json::to_string_pretty(&result).unwrap_or_default()
                 }
-            ]
+            ],
+            "isError": is_error
         }
     })
 }

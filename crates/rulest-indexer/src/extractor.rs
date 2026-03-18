@@ -4,12 +4,15 @@ use std::path::Path;
 use rulest_core::models::{SymbolKind, Visibility};
 use syn::{
     visit::Visit, Fields, FnArg, ImplItem, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStatic, ItemStruct, ItemTrait, ItemType, ReturnType, TraitItem,
+    ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType, TraitItem,
+    UseTree,
 };
 
 /// Extracted symbols from a single Rust source file.
 pub struct ExtractedFile {
     pub symbols: Vec<ExtractedSymbol>,
+    /// Trait implementation relationships: `(trait_name, type_name)` pairs.
+    pub trait_impls: Vec<(String, String)>,
 }
 
 /// A symbol extracted from source code (not yet assigned a module_id).
@@ -30,16 +33,19 @@ pub fn extract_symbols(file_path: &Path) -> Result<ExtractedFile, String> {
 
     let mut visitor = SymbolVisitor {
         symbols: Vec::new(),
+        trait_impls: Vec::new(),
     };
     visitor.visit_file(&syntax);
 
     Ok(ExtractedFile {
         symbols: visitor.symbols,
+        trait_impls: visitor.trait_impls,
     })
 }
 
 struct SymbolVisitor {
     symbols: Vec<ExtractedSymbol>,
+    trait_impls: Vec<(String, String)>,
 }
 
 impl<'ast> Visit<'ast> for SymbolVisitor {
@@ -180,13 +186,25 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
     }
 
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
+        let self_ty = quote_type(&node.self_ty);
+
+        // Record trait implementation relationship
+        if let Some((_, trait_path, _)) = &node.trait_ {
+            let trait_name = trait_path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
+            self.trait_impls.push((trait_name, self_ty.clone()));
+        }
+
         // Extract methods from impl blocks
         for item in &node.items {
             if let ImplItem::Fn(method) = item {
                 let vis = convert_visibility(&method.vis);
                 let sig = format_fn_signature(&method.sig);
 
-                let self_ty = quote_type(&node.self_ty);
                 let _qualified_name = if let Some((_, trait_path, _)) = &node.trait_ {
                     let trait_name = trait_path
                         .segments
@@ -208,6 +226,25 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         }
 
         syn::visit::visit_item_impl(self, node);
+    }
+
+    fn visit_item_use(&mut self, node: &'ast ItemUse) {
+        let vis = convert_visibility(&node.vis);
+
+        // Only extract `pub use` and `pub(crate) use` re-exports
+        if matches!(vis, Visibility::Public | Visibility::CrateLocal) {
+            let paths = flatten_use_tree(&node.tree, "");
+            for (name, full_path) in paths {
+                self.symbols.push(ExtractedSymbol {
+                    name,
+                    kind: SymbolKind::TypeAlias,
+                    visibility: vis,
+                    signature: Some(format!("pub use {}", full_path)),
+                });
+            }
+        }
+
+        syn::visit::visit_item_use(self, node);
     }
 }
 
@@ -277,4 +314,53 @@ fn quote_type(ty: &syn::Type) -> String {
 
 fn quote_pat(pat: &syn::Pat) -> String {
     quote::quote!(#pat).to_string()
+}
+
+/// Flatten a `UseTree` into a list of `(symbol_name, full_path)` pairs.
+fn flatten_use_tree(tree: &UseTree, prefix: &str) -> Vec<(String, String)> {
+    match tree {
+        UseTree::Path(p) => {
+            let segment = p.ident.to_string();
+            let new_prefix = if prefix.is_empty() {
+                segment
+            } else {
+                format!("{}::{}", prefix, segment)
+            };
+            flatten_use_tree(&p.tree, &new_prefix)
+        }
+        UseTree::Name(n) => {
+            let name = n.ident.to_string();
+            let full_path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", prefix, name)
+            };
+            vec![(name, full_path)]
+        }
+        UseTree::Rename(r) => {
+            let original = r.ident.to_string();
+            let alias = r.rename.to_string();
+            let full_path = if prefix.is_empty() {
+                original
+            } else {
+                format!("{}::{}", prefix, original)
+            };
+            vec![(alias, full_path)]
+        }
+        UseTree::Glob(_) => {
+            // `pub use module::*` — record as a glob re-export
+            let full_path = if prefix.is_empty() {
+                "*".to_string()
+            } else {
+                format!("{}::*", prefix)
+            };
+            vec![("*".to_string(), full_path)]
+        }
+        UseTree::Group(g) => {
+            g.items
+                .iter()
+                .flat_map(|sub| flatten_use_tree(sub, prefix))
+                .collect()
+        }
+    }
 }

@@ -6,7 +6,7 @@ MCP JSON-RPC server exposing rulest architecture oracle tools
 
 ## Dependencies
 
-This crate depends on: TODO: list dependencies
+This crate depends on: serde_json, tokio, rusqlite, rulest-core
 
 ## Ownership
 

@@ -6,7 +6,7 @@ CLI for rulest architecture registry and MCP oracle
 
 ## Dependencies
 
-This crate depends on: TODO: list dependencies
+This crate depends on: clap, serde, serde_json, tokio, rulest-core, rulest-indexer, rulest-mcp
 
 ## Ownership
 
