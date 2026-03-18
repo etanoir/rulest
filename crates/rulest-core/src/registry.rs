@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS crates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     path TEXT NOT NULL,
-    description TEXT
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    bounded_context TEXT
 );
 
 CREATE TABLE IF NOT EXISTS modules (
@@ -27,7 +29,9 @@ CREATE TABLE IF NOT EXISTS symbols (
     kind TEXT NOT NULL,
     visibility TEXT NOT NULL DEFAULT 'private',
     signature TEXT,
-    status TEXT NOT NULL DEFAULT 'stable'
+    status TEXT NOT NULL DEFAULT 'stable',
+    created_by TEXT,
+    created_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
@@ -89,7 +93,7 @@ pub fn insert_module(conn: &Connection, m: &Module) -> SqlResult<i64> {
 /// Insert a symbol, returning its id.
 pub fn insert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO symbols (module_id, name, kind, visibility, signature, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO symbols (module_id, name, kind, visibility, signature, status, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             s.module_id,
             s.name,
@@ -97,6 +101,8 @@ pub fn insert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
             s.visibility.as_str(),
             s.signature,
             s.status.as_str(),
+            s.created_by,
+            s.created_at,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -261,6 +267,8 @@ mod tests {
             visibility: Visibility::Public,
             signature: Some("fn foo() -> i32".to_string()),
             status: SymbolStatus::Planned,
+            created_by: None,
+            created_at: None,
         };
         let id1 = upsert_symbol(&conn, &s).unwrap();
 

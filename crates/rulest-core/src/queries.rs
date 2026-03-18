@@ -107,17 +107,32 @@ pub fn validate_boundary(
         .filter_map(|r| r.ok())
         .collect();
 
+    // Collect alternative crates for suggestions
+    let alternative_crates: Vec<(String, String)> = conn
+        .prepare("SELECT name, path FROM crates WHERE name != ?1")
+        .and_then(|mut stmt| {
+            stmt.query_map(params![target_crate], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
     for (_id, crate_name, description, kind) in &rules {
         if kind == "must_not" {
+            // Find the best alternative crate to suggest
+            let (suggested_crate, suggested_path) = alternative_crates
+                .first()
+                .map(|(n, p)| (n.clone(), p.clone()))
+                .unwrap_or_else(|| ("other".to_string(), "crates/other/src/lib.rs".to_string()));
+
             advisories.push(Advisory::BoundaryViolation {
                 rule: description.clone(),
                 crate_name: crate_name.clone(),
                 suggestion: ModuleSuggestion {
-                    module_path: String::new(),
-                    crate_name: String::new(),
+                    module_path: format!("{}/src/lib.rs", suggested_path),
+                    crate_name: suggested_crate.clone(),
                     reason: format!(
-                        "Crate '{}' has a must_not rule: {}. Consider placing '{}' elsewhere.",
-                        crate_name, description, symbol_name
+                        "Crate '{}' has a must_not rule: {}. Consider placing '{}' in crate '{}'.",
+                        crate_name, description, symbol_name, suggested_crate
                     ),
                 },
             });
@@ -140,21 +155,30 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT s.name FROM symbols s
+            "SELECT s.name, s.created_by FROM symbols s
              JOIN modules m ON s.module_id = m.id
              WHERE m.path LIKE ?1 AND s.status IN ('planned', 'wip')",
         )
         .unwrap();
 
-    let symbols: Vec<String> = stmt
-        .query_map(params![format!("%{}%", module_path)], |row| row.get(0))
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map(params![format!("%{}%", module_path)], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .unwrap()
         .filter_map(|r| r.ok())
         .collect();
 
-    if !symbols.is_empty() {
+    if !rows.is_empty() {
+        // Group by agent
+        let symbols: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
+        let agent = rows
+            .iter()
+            .find_map(|(_, a)| a.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         advisories.push(Advisory::WipConflict {
-            agent: "unknown".to_string(),
+            agent,
             branch: None,
             symbols,
         });
@@ -208,6 +232,8 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                     crate_name: row.get(3)?,
                     signature: row.get(4)?,
                     visibility: row.get(5)?,
+                    call_sites: None,
+                    created_by: None,
                 })
             })
             .unwrap()
@@ -250,6 +276,69 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
     }
 
     advisories
+}
+
+/// Register planned actions into the registry as planned/wip symbols.
+///
+/// This is Trigger 2 (Post-Plan Registration) from the Minesweeper architecture:
+/// after AI creates a plan, register the intended symbols so other agents can
+/// detect conflicts via `check_wip`.
+pub fn register_plan(
+    conn: &Connection,
+    actions: &[crate::advisory::PlannedAction],
+    agent: &str,
+) -> Result<usize, String> {
+    let mut registered = 0;
+
+    for action in actions {
+        // Find or create the module for the target path
+        let module_id = match crate::registry::find_module_by_path(conn, &action.target)
+            .map_err(|e| format!("DB error: {}", e))?
+        {
+            Some(m) => m.id.unwrap(),
+            None => {
+                // Module doesn't exist yet — skip (will be created on sync)
+                continue;
+            }
+        };
+
+        let kind = crate::models::SymbolKind::Function; // default for planned symbols
+        let status = if action.action == "create" {
+            crate::models::SymbolStatus::Planned
+        } else {
+            crate::models::SymbolStatus::Wip
+        };
+
+        let now = chrono_now();
+        let symbol = crate::models::Symbol {
+            id: None,
+            module_id,
+            name: action.symbol.clone(),
+            kind,
+            visibility: crate::models::Visibility::Public,
+            signature: None,
+            status,
+            created_by: Some(agent.to_string()),
+            created_at: Some(now),
+        };
+
+        crate::registry::upsert_symbol(conn, &symbol)
+            .map_err(|e| format!("Failed to register symbol '{}': {}", action.symbol, e))?;
+        registered += 1;
+    }
+
+    Ok(registered)
+}
+
+fn chrono_now() -> String {
+    // Simple ISO-8601 timestamp without external dependency
+    use std::time::SystemTime;
+    let duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    // Format as seconds since epoch (good enough without chrono dependency)
+    format!("{}", secs)
 }
 
 /// Validate an entire structured plan against the registry.
@@ -384,7 +473,8 @@ fn group_count(conn: &Connection, sql: &str) -> Vec<(String, usize)> {
 fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility
+            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -400,6 +490,8 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
+            created_by: row.get(6)?,
+            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
         })
     })
     .unwrap()
@@ -410,7 +502,8 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
 fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility
+            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -426,6 +519,8 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
+            created_by: row.get(6)?,
+            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
         })
     })
     .unwrap()
@@ -436,7 +531,8 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
 fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility
+            "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -452,6 +548,8 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
+            created_by: row.get(6)?,
+            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
         })
     })
     .unwrap()
@@ -493,6 +591,8 @@ mod tests {
             visibility: Visibility::Public,
             signature: Some("fn calculate_fee(amount: f64, rate: f64) -> f64".to_string()),
             status: SymbolStatus::Stable,
+            created_by: None,
+            created_at: None,
         };
         insert_symbol(&conn, &s).unwrap();
 
@@ -504,6 +604,8 @@ mod tests {
             visibility: Visibility::Public,
             signature: Some("struct FeeSchedule".to_string()),
             status: SymbolStatus::Stable,
+            created_by: None,
+            created_at: None,
         };
         insert_symbol(&conn, &s2).unwrap();
 
@@ -586,6 +688,8 @@ mod tests {
                 visibility: Visibility::Public,
                 signature: None,
                 status: SymbolStatus::Wip,
+                created_by: None,
+                created_at: None,
             },
         )
         .unwrap();

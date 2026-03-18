@@ -48,6 +48,11 @@ pub fn run(plan_file: &str, db_path: &str) -> Result<(), String> {
 ///   CREATE: fn calculate_settlement_fee in: crates/trading/src/fees.rs
 ///   MODIFY: fn execute_settlement in: crates/trading/src/settlement.rs
 ///   CREATE: struct CurrencyAmount in: crates/trading/src/types.rs
+/// Public re-export for use by register command.
+pub fn parse_plan_public(content: &str) -> Result<Vec<PlannedAction>, String> {
+    parse_plan(content)
+}
+
 fn parse_plan(content: &str) -> Result<Vec<PlannedAction>, String> {
     let mut actions = Vec::new();
 

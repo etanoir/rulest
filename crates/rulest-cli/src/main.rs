@@ -1,5 +1,6 @@
 mod init;
 mod query;
+mod register;
 mod rule;
 mod scaffold;
 mod serve;
@@ -97,6 +98,20 @@ enum Commands {
         db: String,
     },
 
+    /// Register planned symbols from a plan file into the registry
+    RegisterPlan {
+        /// Path to the plan file
+        plan: String,
+
+        /// Agent identifier (e.g. "claude-agent-1")
+        #[arg(short, long, default_value = "cli")]
+        agent: String,
+
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
+
     /// Show registry statistics
     Status {
         /// Path to the registry database
@@ -152,6 +167,7 @@ fn main() {
             suggest_reuse,
         }),
         Commands::Validate { plan, db } => validate::run(&plan, &db),
+        Commands::RegisterPlan { plan, agent, db } => register::run(&plan, &db, &agent),
         Commands::Status { db } => status::run(&db),
         Commands::Serve { db } => serve::run(&db),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),

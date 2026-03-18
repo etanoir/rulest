@@ -9,6 +9,10 @@ pub struct ExistingSymbol {
     pub crate_name: String,
     pub signature: Option<String>,
     pub visibility: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_sites: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
 }
 
 /// A suggestion for which module to use instead.

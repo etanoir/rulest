@@ -31,6 +31,8 @@ pub struct Symbol {
     pub visibility: Visibility,
     pub signature: Option<String>,
     pub status: SymbolStatus,
+    pub created_by: Option<String>,
+    pub created_at: Option<String>,
 }
 
 /// Relationships between symbols (calls, implements, depends_on).

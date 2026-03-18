@@ -84,6 +84,34 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["capability"]
             }
         }),
+        json!({
+            "name": "register_plan",
+            "description": "Register planned symbols from an AI plan into the registry. Enables conflict detection via check_wip for multi-agent coordination.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string", "description": "create or modify" },
+                                "symbol": { "type": "string", "description": "Symbol name" },
+                                "target": { "type": "string", "description": "Target file path" },
+                                "crate_name": { "type": "string", "description": "Target crate name (optional)" }
+                            },
+                            "required": ["action", "symbol", "target"]
+                        },
+                        "description": "List of planned actions to register"
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Agent identifier for tracking"
+                    }
+                },
+                "required": ["actions", "agent"]
+            }
+        }),
     ]
 }
 
@@ -116,6 +144,17 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             let capability = args["capability"].as_str().unwrap_or("");
             let advisories = queries::suggest_reuse(conn, capability);
             json!({ "advisories": advisories })
+        }
+        "register_plan" => {
+            let agent = args["agent"].as_str().unwrap_or("unknown");
+            let actions: Vec<rulest_core::advisory::PlannedAction> = args
+                .get("actions")
+                .and_then(|a| serde_json::from_value(a.clone()).ok())
+                .unwrap_or_default();
+            match queries::register_plan(conn, &actions, agent) {
+                Ok(count) => json!({ "registered": count, "total": actions.len() }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         _ => {
             json!({ "error": format!("Unknown tool: {}", tool_name) })

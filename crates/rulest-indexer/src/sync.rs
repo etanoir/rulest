@@ -133,6 +133,8 @@ pub fn sync_workspace(
                             visibility: sym.visibility,
                             signature: sym.signature,
                             status: SymbolStatus::Stable,
+                            created_by: None,
+                            created_at: None,
                         };
                         registry::insert_symbol(conn, &symbol)
                             .map_err(|e| format!("Failed to insert symbol: {}", e))?;
