@@ -3,6 +3,7 @@ mod query;
 mod rule;
 mod scaffold;
 mod serve;
+mod status;
 mod sync;
 
 use clap::{Parser, Subcommand};
@@ -85,6 +86,13 @@ enum Commands {
         suggest_reuse: Option<String>,
     },
 
+    /// Show registry statistics
+    Status {
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
+
     /// Start the MCP server (JSON-RPC over stdio)
     Serve {
         /// Path to the registry database
@@ -132,6 +140,7 @@ fn main() {
             check_wip,
             suggest_reuse,
         }),
+        Commands::Status { db } => status::run(&db),
         Commands::Serve { db } => serve::run(&db),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),
     };

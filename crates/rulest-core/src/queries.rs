@@ -252,6 +252,61 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
     advisories
 }
 
+/// Aggregate stats from the registry.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RegistryStats {
+    pub crate_count: usize,
+    pub module_count: usize,
+    pub symbol_count: usize,
+    pub rule_count: usize,
+    pub symbols_by_kind: Vec<(String, usize)>,
+    pub symbols_by_visibility: Vec<(String, usize)>,
+    pub symbols_by_status: Vec<(String, usize)>,
+}
+
+/// Get aggregate statistics from the registry.
+pub fn get_registry_stats(conn: &Connection) -> RegistryStats {
+    let crate_count: usize = conn
+        .query_row("SELECT COUNT(*) FROM crates", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let module_count: usize = conn
+        .query_row("SELECT COUNT(*) FROM modules", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let symbol_count: usize = conn
+        .query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let rule_count: usize = conn
+        .query_row("SELECT COUNT(*) FROM ownership_rules", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let symbols_by_kind = group_count(conn, "SELECT kind, COUNT(*) FROM symbols GROUP BY kind");
+    let symbols_by_visibility =
+        group_count(conn, "SELECT visibility, COUNT(*) FROM symbols GROUP BY visibility");
+    let symbols_by_status =
+        group_count(conn, "SELECT status, COUNT(*) FROM symbols GROUP BY status");
+
+    RegistryStats {
+        crate_count,
+        module_count,
+        symbol_count,
+        rule_count,
+        symbols_by_kind,
+        symbols_by_visibility,
+        symbols_by_status,
+    }
+}
+
+fn group_count(conn: &Connection, sql: &str) -> Vec<(String, usize)> {
+    let mut stmt = conn.prepare(sql).unwrap();
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
 // ---- Internal helpers ----
 
 fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
