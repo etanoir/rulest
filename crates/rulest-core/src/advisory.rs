@@ -19,6 +19,45 @@ pub struct ModuleSuggestion {
     pub reason: String,
 }
 
+/// A planned action from a structured AI plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PlannedAction {
+    /// "create" or "modify"
+    pub action: String,
+    /// Symbol name (e.g. "calculate_settlement_fee")
+    pub symbol: String,
+    /// Target file path (e.g. "crates/trading/src/fees.rs")
+    pub target: String,
+    /// Target crate name (e.g. "trading"), derived from target path
+    pub crate_name: Option<String>,
+}
+
+/// Result of validating a single planned action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanValidationResult {
+    pub action: PlannedAction,
+    pub advisories: Vec<Advisory>,
+}
+
+/// Result of validating an entire plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanReport {
+    pub results: Vec<PlanValidationResult>,
+    pub summary: PlanSummary,
+}
+
+/// Summary counts for a plan validation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanSummary {
+    pub total_actions: usize,
+    pub safe: usize,
+    pub reuse: usize,
+    pub violations: usize,
+    pub conflicts: usize,
+    pub ambiguous: usize,
+}
+
 /// Advisory responses from Oracle queries.
 ///
 /// Each variant tells the AI agent what to do based on the registry state.

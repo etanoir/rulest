@@ -252,6 +252,78 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
     advisories
 }
 
+/// Validate an entire structured plan against the registry.
+///
+/// Runs validate_creation, validate_dependency, validate_boundary, and
+/// check_wip for each planned action, composing the existing query functions.
+pub fn validate_plan(
+    conn: &Connection,
+    actions: &[crate::advisory::PlannedAction],
+) -> crate::advisory::PlanReport {
+    use crate::advisory::*;
+
+    let mut results = Vec::new();
+    let mut summary = PlanSummary {
+        total_actions: actions.len(),
+        safe: 0,
+        reuse: 0,
+        violations: 0,
+        conflicts: 0,
+        ambiguous: 0,
+    };
+
+    for action in actions {
+        let mut advisories = Vec::new();
+
+        // Check if symbol already exists
+        let creation = validate_creation(conn, &action.symbol, &action.target);
+        advisories.extend(creation);
+
+        // Check if it's a type that already exists
+        let dep = validate_dependency(conn, &action.symbol);
+        // Only add USE_EXISTING_TYPE advisories (skip SafeToCreate duplicates)
+        for a in &dep {
+            if matches!(a, Advisory::UseExistingType { .. }) {
+                advisories.push(a.clone());
+            }
+        }
+
+        // Check boundary rules if crate name is provided
+        if let Some(ref crate_name) = action.crate_name {
+            let boundary = validate_boundary(conn, &action.symbol, crate_name);
+            for a in &boundary {
+                if matches!(a, Advisory::BoundaryViolation { .. }) {
+                    advisories.push(a.clone());
+                }
+            }
+        }
+
+        // Check for WIP conflicts in the target module
+        let wip = check_wip(conn, &action.target);
+        advisories.extend(wip);
+
+        // Tally summary
+        for a in &advisories {
+            match a {
+                Advisory::SafeToCreate { .. } => summary.safe += 1,
+                Advisory::ReuseExisting { .. }
+                | Advisory::UseExistingType { .. }
+                | Advisory::ReuseWithPattern { .. } => summary.reuse += 1,
+                Advisory::BoundaryViolation { .. } => summary.violations += 1,
+                Advisory::WipConflict { .. } => summary.conflicts += 1,
+                Advisory::AmbiguousMatch { .. } => summary.ambiguous += 1,
+            }
+        }
+
+        results.push(PlanValidationResult {
+            action: action.clone(),
+            advisories,
+        });
+    }
+
+    PlanReport { results, summary }
+}
+
 /// Aggregate stats from the registry.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RegistryStats {

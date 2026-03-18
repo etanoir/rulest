@@ -5,6 +5,7 @@ mod scaffold;
 mod serve;
 mod status;
 mod sync;
+mod validate;
 
 use clap::{Parser, Subcommand};
 
@@ -86,6 +87,16 @@ enum Commands {
         suggest_reuse: Option<String>,
     },
 
+    /// Validate a structured plan file against the registry
+    Validate {
+        /// Path to the plan file
+        plan: String,
+
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
+
     /// Show registry statistics
     Status {
         /// Path to the registry database
@@ -140,6 +151,7 @@ fn main() {
             check_wip,
             suggest_reuse,
         }),
+        Commands::Validate { plan, db } => validate::run(&plan, &db),
         Commands::Status { db } => status::run(&db),
         Commands::Serve { db } => serve::run(&db),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),
