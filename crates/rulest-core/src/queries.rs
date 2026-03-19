@@ -372,35 +372,37 @@ fn chrono_now() -> String {
     epoch_to_iso8601(duration.as_secs())
 }
 
+#[allow(clippy::manual_is_multiple_of)]
+fn is_leap_year(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn days_in_month(y: u64, m: u64) -> u64 {
+    match m {
+        1 => 31,
+        2 => {
+            if is_leap_year(y) {
+                29
+            } else {
+                28
+            }
+        }
+        3 => 31,
+        4 => 30,
+        5 => 31,
+        6 => 30,
+        7 => 31,
+        8 => 31,
+        9 => 30,
+        10 => 31,
+        11 => 30,
+        12 => 31,
+        _ => 30,
+    }
+}
+
 /// Convert epoch seconds to ISO-8601 formatted string (UTC).
 fn epoch_to_iso8601(epoch_secs: u64) -> String {
-    fn is_leap(y: u64) -> bool {
-        (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-    }
-    fn days_in_month(y: u64, m: u64) -> u64 {
-        match m {
-            1 => 31,
-            2 => {
-                if is_leap(y) {
-                    29
-                } else {
-                    28
-                }
-            }
-            3 => 31,
-            4 => 30,
-            5 => 31,
-            6 => 30,
-            7 => 31,
-            8 => 31,
-            9 => 30,
-            10 => 31,
-            11 => 30,
-            12 => 31,
-            _ => 30,
-        }
-    }
-
     let secs_in_day: u64 = 86400;
 
     let time_of_day = epoch_secs % secs_in_day;
@@ -412,7 +414,7 @@ fn epoch_to_iso8601(epoch_secs: u64) -> String {
 
     let mut year: u64 = 1970;
     loop {
-        let days_in_year = if is_leap(year) { 366 } else { 365 };
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
         if days < days_in_year {
             break;
         }
@@ -503,36 +505,9 @@ fn iso8601_to_epoch(s: &str) -> Option<u64> {
     let minute: u64 = time_parts.next()?.parse().ok()?;
     let second: u64 = time_parts.next()?.parse().ok()?;
 
-    fn is_leap(y: u64) -> bool {
-        (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-    }
-    fn days_in_month(y: u64, m: u64) -> u64 {
-        match m {
-            1 => 31,
-            2 => {
-                if is_leap(y) {
-                    29
-                } else {
-                    28
-                }
-            }
-            3 => 31,
-            4 => 30,
-            5 => 31,
-            6 => 30,
-            7 => 31,
-            8 => 31,
-            9 => 30,
-            10 => 31,
-            11 => 30,
-            12 => 31,
-            _ => 30,
-        }
-    }
-
     let mut total_days: u64 = 0;
     for y in 1970..year {
-        total_days += if is_leap(y) { 366 } else { 365 };
+        total_days += if is_leap_year(y) { 366 } else { 365 };
     }
     for m in 1..month {
         total_days += days_in_month(year, m);
@@ -793,6 +768,23 @@ fn find_reexport_path(conn: &Connection, symbol_name: &str, crate_name: &str) ->
     } else {
         None
     }
+}
+
+/// Get all crate-level dependencies as (from_crate_name, to_crate_name) pairs.
+pub fn get_crate_dependencies(conn: &Connection) -> Vec<(String, String)> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT c1.name, c2.name
+             FROM crate_dependencies cd
+             JOIN crates c1 ON cd.from_crate_id = c1.id
+             JOIN crates c2 ON cd.to_crate_id = c2.id",
+        )
+        .unwrap();
+
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
 }
 
 fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> {

@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS ownership_rules (
     description TEXT NOT NULL,
     kind TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS crate_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_crate_id INTEGER NOT NULL REFERENCES crates(id) ON DELETE CASCADE,
+    to_crate_id INTEGER NOT NULL REFERENCES crates(id) ON DELETE CASCADE,
+    UNIQUE(from_crate_id, to_crate_id)
+);
 "#;
 
 /// Open or create a registry database at the given path.
@@ -161,6 +168,25 @@ pub fn insert_ownership_rule(conn: &Connection, r: &OwnershipRule) -> SqlResult<
         rusqlite::params![r.crate_name, r.description, r.kind.as_str()],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Insert a crate dependency, ignoring duplicates.
+pub fn insert_crate_dependency(
+    conn: &Connection,
+    from_crate_id: i64,
+    to_crate_id: i64,
+) -> SqlResult<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO crate_dependencies (from_crate_id, to_crate_id) VALUES (?1, ?2)",
+        rusqlite::params![from_crate_id, to_crate_id],
+    )?;
+    Ok(())
+}
+
+/// Clear all crate dependencies (used during full sync).
+pub fn clear_crate_dependencies(conn: &Connection) -> SqlResult<()> {
+    conn.execute("DELETE FROM crate_dependencies", [])?;
+    Ok(())
 }
 
 /// Delete all symbols belonging to a given module.

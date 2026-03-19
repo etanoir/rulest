@@ -79,11 +79,22 @@ pub fn sync_workspace(
         crate_ids.insert(c.name.clone(), id);
     }
 
-    // Log cross-crate workspace dependencies (available for queries)
-    // Cross-crate deps are tracked at the crate level, not the symbol level,
-    // so we log them here rather than inserting into the symbol relationships table.
+    // Persist cross-crate workspace dependencies.
+    // Clear existing deps first (full sync replaces them all).
+    registry::clear_crate_dependencies(conn)
+        .map_err(|e| format!("Failed to clear crate dependencies: {}", e))?;
     for (from_crate, to_crate) in &workspace_info.dependencies {
-        eprintln!("Workspace dep: {} -> {}", from_crate, to_crate);
+        if let (Some(&from_id), Some(&to_id)) =
+            (crate_ids.get(from_crate), crate_ids.get(to_crate))
+        {
+            registry::insert_crate_dependency(conn, from_id, to_id)
+                .map_err(|e| {
+                    format!(
+                        "Failed to insert crate dependency {} -> {}: {}",
+                        from_crate, to_crate, e
+                    )
+                })?;
+        }
     }
 
     // Collect all trait_impls across files for a second pass after all symbols are inserted

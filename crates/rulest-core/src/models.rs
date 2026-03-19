@@ -164,6 +164,7 @@ pub enum SymbolStatus {
     Stable,
     Planned,
     Wip,
+    Deprecated,
 }
 
 impl SymbolStatus {
@@ -172,6 +173,7 @@ impl SymbolStatus {
             Self::Stable => "stable",
             Self::Planned => "planned",
             Self::Wip => "wip",
+            Self::Deprecated => "deprecated",
         }
     }
 }
@@ -184,6 +186,7 @@ impl FromStr for SymbolStatus {
             "stable" => Ok(Self::Stable),
             "planned" => Ok(Self::Planned),
             "wip" => Ok(Self::Wip),
+            "deprecated" => Ok(Self::Deprecated),
             _ => Err(format!("Invalid symbol status: '{}'", s)),
         }
     }
