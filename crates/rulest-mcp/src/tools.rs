@@ -113,6 +113,31 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["actions", "agent"]
             }
         }),
+        json!({
+            "name": "validate_plan",
+            "description": "Validate an entire structured plan against the registry. Checks each action for conflicts, duplicates, boundary violations, and WIP conflicts. Returns a report with per-action advisories and a summary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string", "description": "create or modify" },
+                                "symbol": { "type": "string", "description": "Symbol name" },
+                                "target": { "type": "string", "description": "Target file path" },
+                                "crate_name": { "type": "string", "description": "Target crate name (optional)" },
+                                "kind": { "type": "string", "description": "Symbol kind: function, struct, enum, trait, type_alias, const, static, macro (optional, defaults to function)" }
+                            },
+                            "required": ["action", "symbol", "target"]
+                        },
+                        "description": "List of planned actions to validate"
+                    }
+                },
+                "required": ["actions"]
+            }
+        }),
     ]
 }
 
@@ -156,6 +181,14 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
                 Ok(count) => json!({ "registered": count, "total": actions.len() }),
                 Err(e) => json!({ "error": e }),
             }
+        }
+        "validate_plan" => {
+            let actions: Vec<rulest_core::advisory::PlannedAction> = args
+                .get("actions")
+                .and_then(|a| serde_json::from_value(a.clone()).ok())
+                .unwrap_or_default();
+            let report = queries::validate_plan(conn, &actions);
+            json!(report)
         }
         _ => {
             json!({ "error": format!("Unknown tool: {}", tool_name) })

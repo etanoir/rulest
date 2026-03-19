@@ -75,6 +75,7 @@ pub enum SymbolKind {
     Const,
     Static,
     Macro,
+    ReExport,
 }
 
 impl SymbolKind {
@@ -88,6 +89,7 @@ impl SymbolKind {
             Self::Const => "const",
             Self::Static => "static",
             Self::Macro => "macro",
+            Self::ReExport => "re_export",
         }
     }
 }
@@ -105,6 +107,7 @@ impl FromStr for SymbolKind {
             "const" => Ok(Self::Const),
             "static" => Ok(Self::Static),
             "macro" => Ok(Self::Macro),
+            "re_export" => Ok(Self::ReExport),
             _ => Err(format!("Invalid symbol kind: '{}'", s)),
         }
     }

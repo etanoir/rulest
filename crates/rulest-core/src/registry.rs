@@ -201,6 +201,34 @@ pub fn find_crate_by_name(conn: &Connection, name: &str) -> SqlResult<Option<Cra
     Ok(result)
 }
 
+/// Find the first symbol ID matching a name and kind.
+pub fn find_symbol_id_by_name_and_kind(
+    conn: &Connection,
+    name: &str,
+    kind: &str,
+) -> SqlResult<Option<i64>> {
+    let result = conn
+        .query_row(
+            "SELECT id FROM symbols WHERE name = ?1 AND kind = ?2 LIMIT 1",
+            rusqlite::params![name, kind],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(result)
+}
+
+/// Find the first symbol ID matching a name (any kind).
+pub fn find_symbol_id_by_name(conn: &Connection, name: &str) -> SqlResult<Option<i64>> {
+    let result = conn
+        .query_row(
+            "SELECT id FROM symbols WHERE name = ?1 LIMIT 1",
+            rusqlite::params![name],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(result)
+}
+
 /// Execute raw SQL (for seed.sql imports).
 pub fn execute_sql(conn: &Connection, sql: &str) -> SqlResult<()> {
     conn.execute_batch(sql)

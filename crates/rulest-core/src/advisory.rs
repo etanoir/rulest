@@ -87,6 +87,7 @@ pub enum Advisory {
     UseExistingType {
         existing: ExistingSymbol,
         prelude_path: String,
+        traits: Vec<String>,
     },
 
     /// Creating this symbol in the target crate violates an ownership rule.
@@ -101,6 +102,7 @@ pub enum Advisory {
         agent: String,
         branch: Option<String>,
         symbols: Vec<String>,
+        last_activity: Option<String>,
     },
 
     /// Multiple candidates match — human/agent must disambiguate.
@@ -113,5 +115,6 @@ pub enum Advisory {
         trait_name: String,
         call_pattern: String,
         example: String,
+        import: String,
     },
 }

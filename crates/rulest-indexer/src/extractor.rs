@@ -4,8 +4,8 @@ use std::path::Path;
 use rulest_core::models::{SymbolKind, Visibility};
 use syn::{
     visit::Visit, Fields, FnArg, ImplItem, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType, TraitItem,
-    UseTree,
+    ItemMacro, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType,
+    TraitItem, UseTree,
 };
 
 /// Extracted symbols from a single Rust source file.
@@ -185,6 +185,20 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         syn::visit::visit_item_static(self, node);
     }
 
+    fn visit_item_macro(&mut self, node: &'ast ItemMacro) {
+        // Only extract named macros (macro_rules! foo { ... })
+        if let Some(ref ident) = node.ident {
+            // macro_rules! are always pub-accessible if exported
+            self.symbols.push(ExtractedSymbol {
+                name: ident.to_string(),
+                kind: SymbolKind::Macro,
+                visibility: Visibility::Public, // macro visibility is determined by #[macro_export]
+                signature: Some(format!("macro_rules! {}", ident)),
+            });
+        }
+        syn::visit::visit_item_macro(self, node);
+    }
+
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
         let self_ty = quote_type(&node.self_ty);
 
@@ -237,7 +251,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             for (name, full_path) in paths {
                 self.symbols.push(ExtractedSymbol {
                     name,
-                    kind: SymbolKind::TypeAlias,
+                    kind: SymbolKind::ReExport,
                     visibility: vis,
                     signature: Some(format!("pub use {}", full_path)),
                 });
@@ -372,12 +386,15 @@ mod tests {
 
     /// Helper: write source to a temp file, extract symbols, return the result.
     fn extract_from_source(source: &str) -> ExtractedFile {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let mut path = std::env::temp_dir();
         let id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("rulest_test_{}.rs", id));
+        let cnt = COUNTER.fetch_add(1, Ordering::SeqCst);
+        path.push(format!("rulest_test_{}_{}.rs", id, cnt));
 
         let mut file = std::fs::File::create(&path).expect("Failed to create temp file");
         file.write_all(source.as_bytes())
@@ -520,5 +537,24 @@ mod tests {
         let sig = sym.signature.as_ref().expect("signature should be present");
         assert!(sig.contains("pub use"), "signature should contain 'pub use', got: {}", sig);
         assert!(sig.contains("crate::module::Symbol"), "signature should contain the full path, got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_macro() {
+        let source = r#"
+            macro_rules! my_macro {
+                ($x:expr) => { $x + 1 };
+            }
+        "#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "my_macro");
+        assert_eq!(sym.kind, SymbolKind::Macro);
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("macro_rules!"), "signature should contain 'macro_rules!', got: {}", sig);
     }
 }

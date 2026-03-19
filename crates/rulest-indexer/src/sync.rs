@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-use rulest_core::models::{Module, Symbol, SymbolKind, SymbolStatus, Visibility};
+use rulest_core::models::{Module, Relationship, RelationshipKind, Symbol, SymbolKind, SymbolStatus, Visibility};
 use rulest_core::registry;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,16 @@ pub fn sync_workspace(
         crate_ids.insert(c.name.clone(), id);
     }
 
+    // Log cross-crate workspace dependencies (available for queries)
+    // Cross-crate deps are tracked at the crate level, not the symbol level,
+    // so we log them here rather than inserting into the symbol relationships table.
+    for (from_crate, to_crate) in &workspace_info.dependencies {
+        eprintln!("Workspace dep: {} -> {}", from_crate, to_crate);
+    }
+
+    // Collect all trait_impls across files for a second pass after all symbols are inserted
+    let mut all_trait_impls: Vec<(String, String)> = Vec::new();
+
     // Process each crate's modules
     for (crate_name, module_infos) in &workspace_info.modules {
         let crate_id = match crate_ids.get(crate_name) {
@@ -147,6 +157,9 @@ pub fn sync_workspace(
                             .map_err(|e| format!("Failed to insert symbol: {}", e))?;
                         stats.symbols_added += 1;
                     }
+
+                    // Collect trait implementation relationships for second pass
+                    all_trait_impls.extend(extracted.trait_impls);
                 }
                 Err(e) => {
                     eprintln!("Warning: {}", e);
@@ -166,6 +179,31 @@ pub fn sync_workspace(
 
             // Update sync log
             sync_log.files.insert(module_info.path.clone(), mtime);
+        }
+    }
+
+    // Second pass: persist trait implementation relationships.
+    // Now that all symbols are inserted, we can look up trait and type symbol IDs.
+    for (trait_name, type_name) in &all_trait_impls {
+        let trait_id = registry::find_symbol_id_by_name_and_kind(conn, trait_name, "trait")
+            .map_err(|e| format!("Failed to look up trait '{}': {}", trait_name, e))?;
+        let type_id = registry::find_symbol_id_by_name(conn, type_name)
+            .map_err(|e| format!("Failed to look up type '{}': {}", type_name, e))?;
+
+        if let (Some(trait_sym_id), Some(type_sym_id)) = (trait_id, type_id) {
+            let relationship = Relationship {
+                id: None,
+                from_symbol_id: type_sym_id,
+                to_symbol_id: trait_sym_id,
+                kind: RelationshipKind::Implements,
+            };
+            registry::insert_relationship(conn, &relationship)
+                .map_err(|e| {
+                    format!(
+                        "Failed to insert trait impl relationship ({} -> {}): {}",
+                        type_name, trait_name, e
+                    )
+                })?;
         }
     }
 

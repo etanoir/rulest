@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use cargo_metadata::MetadataCommand;
@@ -7,6 +8,8 @@ use rulest_core::models::Crate;
 pub struct WorkspaceInfo {
     pub crates: Vec<Crate>,
     pub modules: Vec<(String, Vec<ModuleInfo>)>, // (crate_name, modules)
+    /// Cross-crate dependencies within the workspace: `(from_crate_name, to_crate_name)` pairs.
+    pub dependencies: Vec<(String, String)>,
 }
 
 pub struct ModuleInfo {
@@ -24,15 +27,22 @@ pub fn extract_workspace(workspace_root: &Path) -> Result<WorkspaceInfo, String>
 
     let metadata = MetadataCommand::new()
         .manifest_path(&manifest_path)
-        .no_deps()
         .exec()
         .map_err(|e| format!("Failed to run cargo metadata: {}", e))?;
 
-    let workspace_members: std::collections::HashSet<_> =
-        metadata.workspace_members.iter().collect();
+    let workspace_members: HashSet<_> = metadata.workspace_members.iter().collect();
+
+    // Collect workspace member package names for dependency filtering
+    let workspace_package_names: HashSet<String> = metadata
+        .packages
+        .iter()
+        .filter(|p| workspace_members.contains(&p.id))
+        .map(|p| p.name.clone())
+        .collect();
 
     let mut crates = Vec::new();
     let mut modules = Vec::new();
+    let mut dependencies = Vec::new();
 
     for package in &metadata.packages {
         if !workspace_members.contains(&package.id) {
@@ -64,9 +74,20 @@ pub fn extract_workspace(workspace_root: &Path) -> Result<WorkspaceInfo, String>
         }
 
         modules.push((package.name.clone(), module_infos));
+
+        // Extract workspace-internal dependencies
+        for dep in &package.dependencies {
+            if workspace_package_names.contains(&dep.name) {
+                dependencies.push((package.name.clone(), dep.name.clone()));
+            }
+        }
     }
 
-    Ok(WorkspaceInfo { crates, modules })
+    Ok(WorkspaceInfo {
+        crates,
+        modules,
+        dependencies,
+    })
 }
 
 fn collect_rs_files(dir: &Path, base_path: &str, modules: &mut Vec<ModuleInfo>) {

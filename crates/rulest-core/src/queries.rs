@@ -72,9 +72,18 @@ pub fn validate_dependency(conn: &Connection, type_name: &str) -> Vec<Advisory> 
         });
     } else if matches.len() == 1 {
         let existing = &matches[0];
+
+        // Find traits this type implements via relationships
+        let traits = find_implemented_traits(conn, &existing.name, &existing.module_path);
+
+        // Try to find a pub use re-export path for a nicer prelude path
+        let prelude_path = find_reexport_path(conn, &existing.name, &existing.crate_name)
+            .unwrap_or_else(|| format!("{}::{}", existing.crate_name, existing.name));
+
         advisories.push(Advisory::UseExistingType {
             existing: existing.clone(),
-            prelude_path: format!("{}::{}", existing.crate_name, existing.name),
+            prelude_path,
+            traits,
         });
     } else {
         advisories.push(Advisory::AmbiguousMatch {
@@ -177,16 +186,18 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
             .find_map(|(_, a, _)| a.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Use the most recent updated_at as last_activity info in the branch field
-        let last_activity = rows
+        // Compute relative time from the most recent updated_at timestamp
+        let last_activity_relative = rows
             .iter()
             .filter_map(|(_, _, u)| u.clone())
-            .max();
+            .max()
+            .map(|ts| relative_time(&ts));
 
         advisories.push(Advisory::WipConflict {
             agent,
-            branch: last_activity,
+            branch: None,
             symbols,
+            last_activity: last_activity_relative,
         });
     }
 
@@ -258,6 +269,12 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
     } else if all_matches.len() == 1 {
         let existing = &all_matches[0];
         if existing.kind == "trait" {
+            let import_path = format!(
+                "use {}::{}::{};",
+                existing.crate_name,
+                existing.module_path.rsplit('/').next().unwrap_or(&existing.module_path).trim_end_matches(".rs"),
+                existing.name
+            );
             advisories.push(Advisory::ReuseWithPattern {
                 trait_name: existing.name.clone(),
                 call_pattern: format!("impl {} for YourType", existing.name),
@@ -265,6 +282,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                     "See {}::{} for the trait definition",
                     existing.crate_name, existing.module_path
                 ),
+                import: import_path,
             });
         } else {
             advisories.push(Advisory::ReuseExisting {
@@ -342,14 +360,182 @@ pub fn register_plan(
 }
 
 fn chrono_now() -> String {
-    // Simple ISO-8601 timestamp without external dependency
+    // ISO-8601 timestamp without external dependency
     use std::time::SystemTime;
     let duration = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = duration.as_secs();
-    // Format as seconds since epoch (good enough without chrono dependency)
-    format!("{}", secs)
+    epoch_to_iso8601(duration.as_secs())
+}
+
+/// Convert epoch seconds to ISO-8601 formatted string (UTC).
+fn epoch_to_iso8601(epoch_secs: u64) -> String {
+    fn is_leap(y: u64) -> bool {
+        (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+    }
+    fn days_in_month(y: u64, m: u64) -> u64 {
+        match m {
+            1 => 31,
+            2 => {
+                if is_leap(y) {
+                    29
+                } else {
+                    28
+                }
+            }
+            3 => 31,
+            4 => 30,
+            5 => 31,
+            6 => 30,
+            7 => 31,
+            8 => 31,
+            9 => 30,
+            10 => 31,
+            11 => 30,
+            12 => 31,
+            _ => 30,
+        }
+    }
+
+    let secs_in_day: u64 = 86400;
+
+    let time_of_day = epoch_secs % secs_in_day;
+    let mut days = epoch_secs / secs_in_day;
+
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+
+    let mut year: u64 = 1970;
+    loop {
+        let days_in_year = if is_leap(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+
+    let mut month: u64 = 1;
+    loop {
+        let dim = days_in_month(year, month);
+        if days < dim {
+            break;
+        }
+        days -= dim;
+        month += 1;
+    }
+    let day = days + 1;
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
+}
+
+/// Convert a timestamp string to a human-readable relative time string like "12 minutes ago".
+/// Accepts either epoch seconds (legacy) or ISO-8601 format.
+fn relative_time(timestamp: &str) -> String {
+    use std::time::SystemTime;
+
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Try parsing as epoch seconds first (legacy format)
+    let ts_secs = if let Ok(epoch) = timestamp.parse::<u64>() {
+        epoch
+    } else if let Some(secs) = iso8601_to_epoch(timestamp) {
+        secs
+    } else {
+        return "unknown".to_string();
+    };
+
+    if now_secs <= ts_secs {
+        return "just now".to_string();
+    }
+
+    let diff = now_secs - ts_secs;
+
+    if diff < 60 {
+        return "just now".to_string();
+    }
+    if diff < 3600 {
+        let mins = diff / 60;
+        return if mins == 1 {
+            "1 minute ago".to_string()
+        } else {
+            format!("{} minutes ago", mins)
+        };
+    }
+    if diff < 86400 {
+        let hours = diff / 3600;
+        return if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{} hours ago", hours)
+        };
+    }
+    let days = diff / 86400;
+    if days == 1 {
+        "1 day ago".to_string()
+    } else {
+        format!("{} days ago", days)
+    }
+}
+
+/// Parse a simple ISO-8601 timestamp (YYYY-MM-DDTHH:MM:SSZ) to epoch seconds.
+fn iso8601_to_epoch(s: &str) -> Option<u64> {
+    let s = s.trim_end_matches('Z');
+    let (date_part, time_part) = s.split_once('T')?;
+    let mut date_parts = date_part.split('-');
+    let year: u64 = date_parts.next()?.parse().ok()?;
+    let month: u64 = date_parts.next()?.parse().ok()?;
+    let day: u64 = date_parts.next()?.parse().ok()?;
+
+    let mut time_parts = time_part.split(':');
+    let hour: u64 = time_parts.next()?.parse().ok()?;
+    let minute: u64 = time_parts.next()?.parse().ok()?;
+    let second: u64 = time_parts.next()?.parse().ok()?;
+
+    fn is_leap(y: u64) -> bool {
+        (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+    }
+    fn days_in_month(y: u64, m: u64) -> u64 {
+        match m {
+            1 => 31,
+            2 => {
+                if is_leap(y) {
+                    29
+                } else {
+                    28
+                }
+            }
+            3 => 31,
+            4 => 30,
+            5 => 31,
+            6 => 30,
+            7 => 31,
+            8 => 31,
+            9 => 30,
+            10 => 31,
+            11 => 30,
+            12 => 31,
+            _ => 30,
+        }
+    }
+
+    let mut total_days: u64 = 0;
+    for y in 1970..year {
+        total_days += if is_leap(y) { 366 } else { 365 };
+    }
+    for m in 1..month {
+        total_days += days_in_month(year, m);
+    }
+    total_days += day - 1;
+
+    Some(total_days * 86400 + hour * 3600 + minute * 60 + second)
 }
 
 /// Validate an entire structured plan against the registry.
@@ -539,6 +725,66 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
     .collect()
 }
 
+/// Find traits implemented by a given symbol (via `Implements` relationships).
+fn find_implemented_traits(conn: &Connection, symbol_name: &str, module_path: &str) -> Vec<String> {
+    // Find the symbol's id first
+    let symbol_id: Option<i64> = conn
+        .query_row(
+            "SELECT s.id FROM symbols s
+             JOIN modules m ON s.module_id = m.id
+             WHERE s.name = ?1 AND m.path = ?2",
+            params![symbol_name, module_path],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let Some(sid) = symbol_id else {
+        return Vec::new();
+    };
+
+    // Look up Implements relationships where this symbol is the from_symbol
+    let mut stmt = conn
+        .prepare(
+            "SELECT s2.name FROM relationships r
+             JOIN symbols s2 ON r.to_symbol_id = s2.id
+             WHERE r.from_symbol_id = ?1 AND r.kind = 'implements'",
+        )
+        .unwrap();
+
+    stmt.query_map(params![sid], |row| row.get::<_, String>(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+/// Try to find a `pub use` re-export path for a symbol (e.g., prelude path).
+fn find_reexport_path(conn: &Connection, symbol_name: &str, crate_name: &str) -> Option<String> {
+    // Look for a re-export symbol (kind = 're_export' or a symbol in a prelude/lib module)
+    // that references this name
+    let result: Option<(String, String)> = conn
+        .query_row(
+            "SELECT m.path, c.name FROM symbols s
+             JOIN modules m ON s.module_id = m.id
+             JOIN crates c ON m.crate_id = c.id
+             WHERE s.name = ?1 AND s.kind = 're_export' AND c.name = ?2",
+            params![symbol_name, crate_name],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+
+    if let Some((mod_path, cn)) = result {
+        // Build a Rust-style prelude path from the module path
+        let module_name = mod_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&mod_path)
+            .trim_end_matches(".rs");
+        Some(format!("{}::{}::{}", cn, module_name, symbol_name))
+    } else {
+        None
+    }
+}
+
 fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
@@ -547,7 +793,7 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
-             WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias')",
+             WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias', 're_export')",
         )
         .unwrap();
 
