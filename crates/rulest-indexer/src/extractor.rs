@@ -4,7 +4,7 @@ use std::path::Path;
 use rulest_core::models::{SymbolKind, Visibility};
 use syn::{
     visit::Visit, Fields, FnArg, ImplItem, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemMacro, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType,
+    ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType,
     TraitItem, UseTree,
 };
 
@@ -36,7 +36,7 @@ pub fn extract_symbols(file_path: &Path) -> Result<ExtractedFile, String> {
     let mut visitor = SymbolVisitor {
         symbols: Vec::new(),
         trait_impls: Vec::new(),
-        current_scope: None,
+        scope_stack: Vec::new(),
     };
     visitor.visit_file(&syntax);
 
@@ -49,8 +49,19 @@ pub fn extract_symbols(file_path: &Path) -> Result<ExtractedFile, String> {
 struct SymbolVisitor {
     symbols: Vec<ExtractedSymbol>,
     trait_impls: Vec<(String, String)>,
-    /// Current scope context for nested items (e.g., "impl FeeCalculator").
-    current_scope: Option<String>,
+    /// Scope stack for nested items (e.g., ["mod trading", "impl FeeCalculator"]).
+    scope_stack: Vec<String>,
+}
+
+impl SymbolVisitor {
+    /// Join the scope stack with ` > ` separator, returning `None` if empty.
+    fn current_scope(&self) -> Option<String> {
+        if self.scope_stack.is_empty() {
+            None
+        } else {
+            Some(self.scope_stack.join(" > "))
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for SymbolVisitor {
@@ -65,7 +76,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(sig),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         // Don't recurse into function bodies for nested items
@@ -106,7 +117,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(format!("struct {}{}", node.ident, fields_str)),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_struct(self, node);
@@ -123,7 +134,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(format!("enum {} {{ {} }}", node.ident, variants.join(", "))),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_enum(self, node);
@@ -154,7 +165,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                 methods.join("; ")
             )),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_trait(self, node);
@@ -171,7 +182,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(format!("type {} = {}", node.ident, ty)),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_type(self, node);
@@ -188,7 +199,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(format!("const {}: {}", node.ident, ty)),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_const(self, node);
@@ -205,7 +216,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             visibility: vis,
             signature: Some(format!("static {}: {}", node.ident, ty)),
             line_number: Some(line),
-            scope: self.current_scope.clone(),
+            scope: self.current_scope(),
         });
 
         syn::visit::visit_item_static(self, node);
@@ -222,10 +233,16 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                 visibility: Visibility::Public, // macro visibility is determined by #[macro_export]
                 signature: Some(format!("macro_rules! {}", ident)),
                 line_number: Some(line),
-                scope: self.current_scope.clone(),
+                scope: self.current_scope(),
             });
         }
         syn::visit::visit_item_macro(self, node);
+    }
+
+    fn visit_item_mod(&mut self, node: &'ast ItemMod) {
+        self.scope_stack.push(format!("mod {}", node.ident));
+        syn::visit::visit_item_mod(self, node);
+        self.scope_stack.pop();
     }
 
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
@@ -255,9 +272,8 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             format!("impl {}", self_ty)
         };
 
-        // Save previous scope and set current scope for methods
-        let prev_scope = self.current_scope.take();
-        self.current_scope = Some(scope);
+        // Push scope for methods in this impl block
+        self.scope_stack.push(scope);
 
         // Extract methods from impl blocks
         for item in &node.items {
@@ -283,15 +299,15 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                     visibility: vis,
                     signature: Some(sig),
                     line_number: Some(line),
-                    scope: self.current_scope.clone(),
+                    scope: self.current_scope(),
                 });
             }
         }
 
         syn::visit::visit_item_impl(self, node);
 
-        // Restore previous scope
-        self.current_scope = prev_scope;
+        // Pop the impl scope
+        self.scope_stack.pop();
     }
 
     fn visit_item_use(&mut self, node: &'ast ItemUse) {
@@ -307,7 +323,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                     visibility: vis,
                     signature: Some(format!("pub use {}", full_path)),
                     line_number: None,
-                    scope: self.current_scope.clone(),
+                    scope: self.current_scope(),
                 });
             }
         }

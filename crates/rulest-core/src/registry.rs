@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS modules (
     name TEXT NOT NULL
 );
 
+-- NOTE: The article schema includes purpose/status on modules, but we omit these
+-- because module metadata is better captured at the crate level (crates.description)
+-- and symbol level (symbols.status). Modules are structural containers, not semantic units.
+
 CREATE TABLE IF NOT EXISTS symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
@@ -54,6 +58,12 @@ CREATE TABLE IF NOT EXISTS contracts (
     kind TEXT NOT NULL,
     description TEXT NOT NULL
 );
+
+-- NOTE: The article schema uses CONTRACT (trait_name, implementor, module_path) for
+-- trait-specific contracts. Our schema generalizes this: trait implementations are
+-- captured in the relationships table (kind='implements'), while the contracts table
+-- stores broader invariants (preconditions, postconditions, invariants) attached to
+-- any symbol. This is intentionally more flexible than the article's design.
 
 CREATE TABLE IF NOT EXISTS ownership_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

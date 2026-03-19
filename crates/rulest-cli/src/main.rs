@@ -1,3 +1,4 @@
+mod build;
 mod init;
 mod query;
 mod register;
@@ -132,6 +133,17 @@ enum Commands {
         #[arg(short, long, default_value = "Cargo.toml")]
         workspace: String,
     },
+
+    /// Build the workspace and auto-sync the registry
+    Build {
+        /// Path to the workspace Cargo.toml
+        #[arg(short, long, default_value = "Cargo.toml")]
+        workspace: String,
+
+        /// Additional arguments to pass to cargo build
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
+    },
 }
 
 fn main() {
@@ -171,6 +183,10 @@ fn main() {
         Commands::Status { db } => status::run(&db),
         Commands::Serve { db } => serve::run(&db),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),
+        Commands::Build {
+            workspace,
+            cargo_args,
+        } => build::run(&workspace, &cargo_args),
     };
 
     if let Err(e) = result {

@@ -32,3 +32,7 @@ Before writing code:
 2. Run `validate_dependency` to find existing types
 3. Run `validate_boundary` to check ownership rules
 4. Run `check_wip` to detect concurrent work
+
+### Post-Build Sync
+
+Run `rulest build` instead of `cargo build` to automatically sync the architecture registry after compilation.

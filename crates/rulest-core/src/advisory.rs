@@ -17,6 +17,8 @@ pub struct ExistingSymbol {
     pub line_number: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
 }
 
 /// A suggestion for which module to use instead.

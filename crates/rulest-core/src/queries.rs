@@ -253,6 +253,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                     created_by: None,
                     line_number: None,
                     scope: None,
+                    location: None,
                 })
             })
             .unwrap()
@@ -660,17 +661,21 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
         .unwrap();
 
     stmt.query_map(params![name], |row| {
+        let module_path: String = row.get(2)?;
+        let line_number: Option<u32> = row.get(8)?;
+        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
         Ok(ExistingSymbol {
             name: row.get(0)?,
             kind: row.get(1)?,
-            module_path: row.get(2)?,
+            module_path,
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number: row.get(8)?,
+            line_number,
             scope: row.get(9)?,
+            location,
         })
     })
     .unwrap()
@@ -692,17 +697,21 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
         .unwrap();
 
     stmt.query_map(params![format!("%{}%", pattern)], |row| {
+        let module_path: String = row.get(2)?;
+        let line_number: Option<u32> = row.get(8)?;
+        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
         Ok(ExistingSymbol {
             name: row.get(0)?,
             kind: row.get(1)?,
-            module_path: row.get(2)?,
+            module_path,
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number: row.get(8)?,
+            line_number,
             scope: row.get(9)?,
+            location,
         })
     })
     .unwrap()
@@ -801,17 +810,21 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
         .unwrap();
 
     stmt.query_map(params![type_name], |row| {
+        let module_path: String = row.get(2)?;
+        let line_number: Option<u32> = row.get(8)?;
+        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
         Ok(ExistingSymbol {
             name: row.get(0)?,
             kind: row.get(1)?,
-            module_path: row.get(2)?,
+            module_path,
             crate_name: row.get(3)?,
             signature: row.get(4)?,
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number: row.get(8)?,
+            line_number,
             scope: row.get(9)?,
+            location,
         })
     })
     .unwrap()
