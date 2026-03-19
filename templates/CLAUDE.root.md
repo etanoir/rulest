@@ -1,4 +1,4 @@
-# {{project_name}}
+# {{workspace_name}}
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Before creating new symbols, query the architecture registry:
 
 | Concern | Crate | Notes |
 |---------|-------|-------|
-{{crate_table}}
+{{crate_list}}
 
 ### Pre-flight Checklist
 

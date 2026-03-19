@@ -231,6 +231,8 @@ mod tests {
             kind: SymbolKind::Function,
             visibility: Visibility::Public,
             signature: Some("fn helper_fn() -> bool".to_string()),
+            line_number: None,
+            scope: None,
             status: SymbolStatus::Stable,
             created_by: None,
             created_at: None,

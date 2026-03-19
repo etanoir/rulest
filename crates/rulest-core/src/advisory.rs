@@ -13,6 +13,10 @@ pub struct ExistingSymbol {
     pub call_sites: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// A suggestion for which module to use instead.

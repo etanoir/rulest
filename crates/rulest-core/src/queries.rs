@@ -251,6 +251,8 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                     visibility: row.get(5)?,
                     call_sites: None,
                     created_by: None,
+                    line_number: None,
+                    scope: None,
                 })
             })
             .unwrap()
@@ -345,6 +347,8 @@ pub fn register_plan(
             kind,
             visibility: crate::models::Visibility::Public,
             signature: None,
+            line_number: None,
+            scope: None,
             status,
             created_by: Some(agent.to_string()),
             created_at: Some(now.clone()),
@@ -371,7 +375,7 @@ fn chrono_now() -> String {
 /// Convert epoch seconds to ISO-8601 formatted string (UTC).
 fn epoch_to_iso8601(epoch_secs: u64) -> String {
     fn is_leap(y: u64) -> bool {
-        (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+        (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
     }
     fn days_in_month(y: u64, m: u64) -> u64 {
         match m {
@@ -500,7 +504,7 @@ fn iso8601_to_epoch(s: &str) -> Option<u64> {
     let second: u64 = time_parts.next()?.parse().ok()?;
 
     fn is_leap(y: u64) -> bool {
-        (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+        (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
     }
     fn days_in_month(y: u64, m: u64) -> u64 {
         match m {
@@ -671,7 +675,8 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
-                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id AND r.kind = 'calls') as call_sites,
+                    s.line_number, s.scope
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -689,6 +694,8 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+            line_number: row.get(8)?,
+            scope: row.get(9)?,
         })
     })
     .unwrap()
@@ -700,7 +707,8 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
-                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id AND r.kind = 'calls') as call_sites,
+                    s.line_number, s.scope
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -718,6 +726,8 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+            line_number: row.get(8)?,
+            scope: row.get(9)?,
         })
     })
     .unwrap()
@@ -789,7 +799,8 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
-                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id) as call_sites
+                    (SELECT COUNT(*) FROM relationships r WHERE r.to_symbol_id = s.id AND r.kind = 'calls') as call_sites,
+                    s.line_number, s.scope
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
@@ -807,6 +818,8 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
             visibility: row.get(5)?,
             created_by: row.get(6)?,
             call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+            line_number: row.get(8)?,
+            scope: row.get(9)?,
         })
     })
     .unwrap()
@@ -848,6 +861,8 @@ mod tests {
             kind: SymbolKind::Function,
             visibility: Visibility::Public,
             signature: Some("fn calculate_fee(amount: f64, rate: f64) -> f64".to_string()),
+            line_number: None,
+            scope: None,
             status: SymbolStatus::Stable,
             created_by: None,
             created_at: None,
@@ -862,6 +877,8 @@ mod tests {
             kind: SymbolKind::Struct,
             visibility: Visibility::Public,
             signature: Some("struct FeeSchedule".to_string()),
+            line_number: None,
+            scope: None,
             status: SymbolStatus::Stable,
             created_by: None,
             created_at: None,
@@ -947,6 +964,8 @@ mod tests {
                 kind: SymbolKind::Function,
                 visibility: Visibility::Public,
                 signature: None,
+                line_number: None,
+                scope: None,
                 status: SymbolStatus::Wip,
                 created_by: None,
                 created_at: None,

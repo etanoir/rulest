@@ -148,6 +148,8 @@ pub fn sync_workspace(
                             kind: sym.kind,
                             visibility: sym.visibility,
                             signature: sym.signature,
+                            line_number: sym.line_number,
+                            scope: sym.scope,
                             status: SymbolStatus::Stable,
                             created_by: None,
                             created_at: None,
@@ -226,13 +228,13 @@ fn query_planned_wip_symbols(
     module_id: i64,
 ) -> Result<Vec<Symbol>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, module_id, name, kind, visibility, signature, status, created_by, created_at, updated_at \
+        "SELECT id, module_id, name, kind, visibility, signature, line_number, scope, status, created_by, created_at, updated_at \
          FROM symbols WHERE module_id = ?1 AND status IN ('planned', 'wip')",
     )?;
     let rows = stmt.query_map(rusqlite::params![module_id], |row| {
         let kind_str: String = row.get(3)?;
         let vis_str: String = row.get(4)?;
-        let status_str: String = row.get(6)?;
+        let status_str: String = row.get(8)?;
         Ok(Symbol {
             id: None, // Will be re-inserted with a new id
             module_id: row.get(1)?,
@@ -244,12 +246,14 @@ fn query_planned_wip_symbols(
                 .parse::<Visibility>()
                 .unwrap_or(Visibility::Private),
             signature: row.get(5)?,
+            line_number: row.get(6)?,
+            scope: row.get(7)?,
             status: status_str
                 .parse::<SymbolStatus>()
                 .unwrap_or(SymbolStatus::Planned),
-            created_by: row.get(7)?,
-            created_at: row.get(8)?,
-            updated_at: row.get(9)?,
+            created_by: row.get(9)?,
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
         })
     })?;
     rows.collect()

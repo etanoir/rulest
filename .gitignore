@@ -5,4 +5,3 @@
 *.db-wal
 *.db-shm
 sync.log
-Cargo.lock

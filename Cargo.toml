@@ -14,3 +14,14 @@ license = "MIT"
 repository = "https://github.com/etanoir/rulest"
 keywords = ["architecture", "mcp", "registry", "vibe-coding", "rust"]
 categories = ["development-tools", "command-line-utilities"]
+
+[package]
+name = "rulest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+rulest-core = { path = "crates/rulest-core" }
+rulest-indexer = { path = "crates/rulest-indexer" }

@@ -31,6 +31,8 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub visibility: Visibility,
     pub signature: Option<String>,
+    pub line_number: Option<u32>,
+    pub scope: Option<String>,
     pub status: SymbolStatus,
     pub created_by: Option<String>,
     pub created_at: Option<String>,

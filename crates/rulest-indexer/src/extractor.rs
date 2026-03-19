@@ -21,6 +21,8 @@ pub struct ExtractedSymbol {
     pub kind: SymbolKind,
     pub visibility: Visibility,
     pub signature: Option<String>,
+    pub line_number: Option<u32>,
+    pub scope: Option<String>,
 }
 
 /// Parse a Rust source file and extract all symbols.
@@ -34,6 +36,7 @@ pub fn extract_symbols(file_path: &Path) -> Result<ExtractedFile, String> {
     let mut visitor = SymbolVisitor {
         symbols: Vec::new(),
         trait_impls: Vec::new(),
+        current_scope: None,
     };
     visitor.visit_file(&syntax);
 
@@ -46,18 +49,23 @@ pub fn extract_symbols(file_path: &Path) -> Result<ExtractedFile, String> {
 struct SymbolVisitor {
     symbols: Vec<ExtractedSymbol>,
     trait_impls: Vec<(String, String)>,
+    /// Current scope context for nested items (e.g., "impl FeeCalculator").
+    current_scope: Option<String>,
 }
 
 impl<'ast> Visit<'ast> for SymbolVisitor {
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
         let vis = convert_visibility(&node.vis);
         let sig = format_fn_signature(&node.sig);
+        let line = node.sig.ident.span().start().line as u32;
 
         self.symbols.push(ExtractedSymbol {
             name: node.sig.ident.to_string(),
             kind: SymbolKind::Function,
             visibility: vis,
             signature: Some(sig),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         // Don't recurse into function bodies for nested items
@@ -91,11 +99,14 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             Fields::Unit => String::new(),
         };
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::Struct,
             visibility: vis,
             signature: Some(format!("struct {}{}", node.ident, fields_str)),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_struct(self, node);
@@ -105,11 +116,14 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         let vis = convert_visibility(&node.vis);
         let variants: Vec<String> = node.variants.iter().map(|v| v.ident.to_string()).collect();
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::Enum,
             visibility: vis,
             signature: Some(format!("enum {} {{ {} }}", node.ident, variants.join(", "))),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_enum(self, node);
@@ -129,6 +143,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             })
             .collect();
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::Trait,
@@ -138,6 +153,8 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                 node.ident,
                 methods.join("; ")
             )),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_trait(self, node);
@@ -147,11 +164,14 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         let vis = convert_visibility(&node.vis);
         let ty = quote_type(&node.ty);
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::TypeAlias,
             visibility: vis,
             signature: Some(format!("type {} = {}", node.ident, ty)),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_type(self, node);
@@ -161,11 +181,14 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         let vis = convert_visibility(&node.vis);
         let ty = quote_type(&node.ty);
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::Const,
             visibility: vis,
             signature: Some(format!("const {}: {}", node.ident, ty)),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_const(self, node);
@@ -175,11 +198,14 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         let vis = convert_visibility(&node.vis);
         let ty = quote_type(&node.ty);
 
+        let line = node.ident.span().start().line as u32;
         self.symbols.push(ExtractedSymbol {
             name: node.ident.to_string(),
             kind: SymbolKind::Static,
             visibility: vis,
             signature: Some(format!("static {}: {}", node.ident, ty)),
+            line_number: Some(line),
+            scope: self.current_scope.clone(),
         });
 
         syn::visit::visit_item_static(self, node);
@@ -188,12 +214,15 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
     fn visit_item_macro(&mut self, node: &'ast ItemMacro) {
         // Only extract named macros (macro_rules! foo { ... })
         if let Some(ref ident) = node.ident {
+            let line = ident.span().start().line as u32;
             // macro_rules! are always pub-accessible if exported
             self.symbols.push(ExtractedSymbol {
                 name: ident.to_string(),
                 kind: SymbolKind::Macro,
                 visibility: Visibility::Public, // macro visibility is determined by #[macro_export]
                 signature: Some(format!("macro_rules! {}", ident)),
+                line_number: Some(line),
+                scope: self.current_scope.clone(),
             });
         }
         syn::visit::visit_item_macro(self, node);
@@ -213,6 +242,23 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             self.trait_impls.push((trait_name, self_ty.clone()));
         }
 
+        // Compute scope for methods in this impl block
+        let scope = if let Some((_, trait_path, _)) = &node.trait_ {
+            let trait_name = trait_path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
+            format!("impl {} for {}", trait_name, self_ty)
+        } else {
+            format!("impl {}", self_ty)
+        };
+
+        // Save previous scope and set current scope for methods
+        let prev_scope = self.current_scope.take();
+        self.current_scope = Some(scope);
+
         // Extract methods from impl blocks
         for item in &node.items {
             if let ImplItem::Fn(method) = item {
@@ -230,16 +276,22 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                     format!("{}::{}", self_ty, method.sig.ident)
                 };
 
+                let line = method.sig.ident.span().start().line as u32;
                 self.symbols.push(ExtractedSymbol {
                     name: method.sig.ident.to_string(),
                     kind: SymbolKind::Function,
                     visibility: vis,
                     signature: Some(sig),
+                    line_number: Some(line),
+                    scope: self.current_scope.clone(),
                 });
             }
         }
 
         syn::visit::visit_item_impl(self, node);
+
+        // Restore previous scope
+        self.current_scope = prev_scope;
     }
 
     fn visit_item_use(&mut self, node: &'ast ItemUse) {
@@ -254,6 +306,8 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
                     kind: SymbolKind::ReExport,
                     visibility: vis,
                     signature: Some(format!("pub use {}", full_path)),
+                    line_number: None,
+                    scope: self.current_scope.clone(),
                 });
             }
         }

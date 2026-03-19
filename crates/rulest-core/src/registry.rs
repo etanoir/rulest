@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS symbols (
     kind TEXT NOT NULL,
     visibility TEXT NOT NULL DEFAULT 'private',
     signature TEXT,
+    line_number INTEGER,
+    scope TEXT,
     status TEXT NOT NULL DEFAULT 'stable',
     created_by TEXT,
     created_at TEXT,
@@ -94,13 +96,15 @@ pub fn insert_module(conn: &Connection, m: &Module) -> SqlResult<i64> {
 /// Insert a symbol, returning its id.
 pub fn insert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO symbols (module_id, name, kind, visibility, signature, status, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO symbols (module_id, name, kind, visibility, signature, line_number, scope, status, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             s.module_id,
             s.name,
             s.kind.as_str(),
             s.visibility.as_str(),
             s.signature,
+            s.line_number,
+            s.scope,
             s.status.as_str(),
             s.created_by,
             s.created_at,
@@ -123,8 +127,8 @@ pub fn upsert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
 
     if let Some(id) = existing {
         conn.execute(
-            "UPDATE symbols SET visibility = ?1, signature = ?2, status = ?3, updated_at = ?4 WHERE id = ?5",
-            rusqlite::params![s.visibility.as_str(), s.signature, s.status.as_str(), s.updated_at, id],
+            "UPDATE symbols SET visibility = ?1, signature = ?2, line_number = ?3, scope = ?4, status = ?5, updated_at = ?6 WHERE id = ?7",
+            rusqlite::params![s.visibility.as_str(), s.signature, s.line_number, s.scope, s.status.as_str(), s.updated_at, id],
         )?;
         Ok(id)
     } else {
@@ -299,6 +303,8 @@ mod tests {
             kind: SymbolKind::Function,
             visibility: Visibility::Public,
             signature: Some("fn foo() -> i32".to_string()),
+            line_number: None,
+            scope: None,
             status: SymbolStatus::Planned,
             created_by: None,
             created_at: None,

@@ -11,6 +11,7 @@ categories.workspace = true
 [dependencies]
 rulest-core = { path = "../rulest-core" }
 syn = { version = "2", features = ["full", "parsing", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 cargo_metadata = "0.18"
 walkdir = "2"
