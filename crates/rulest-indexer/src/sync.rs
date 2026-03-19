@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use rulest_core::models::{Module, Relationship, RelationshipKind, Symbol, SymbolKind, SymbolStatus, Visibility};
 use rulest_core::registry;
@@ -53,6 +54,98 @@ impl SyncLog {
     }
 }
 
+/// File-based lock to prevent concurrent sync operations.
+///
+/// Creates `.architect/sync.lock` containing the current PID. On acquire,
+/// checks whether an existing lock is held by a live process. Locks older
+/// than 10 minutes are treated as stale and reclaimed. The lock file is
+/// automatically removed when the guard is dropped (RAII).
+struct SyncLock {
+    path: PathBuf,
+}
+
+/// Maximum age (in seconds) before a lock is considered stale.
+const LOCK_STALE_SECS: u64 = 600; // 10 minutes
+
+impl SyncLock {
+    /// Attempt to acquire the sync lock.
+    ///
+    /// Returns `Err` if another sync process is actively holding the lock.
+    fn acquire(architect_dir: &Path) -> Result<Self, String> {
+        let lock_path = architect_dir.join("sync.lock");
+
+        if lock_path.exists() {
+            // Read existing lock
+            let contents = fs::read_to_string(&lock_path)
+                .map_err(|e| format!("Failed to read lock file: {}", e))?;
+            let existing_pid: u32 = contents
+                .trim()
+                .parse()
+                .unwrap_or(0);
+
+            // Check if the lock is stale by age
+            let is_stale = match fs::metadata(&lock_path) {
+                Ok(meta) => match meta.modified() {
+                    Ok(modified) => match SystemTime::now().duration_since(modified) {
+                        Ok(age) => age.as_secs() > LOCK_STALE_SECS,
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+
+            if !is_stale && existing_pid != 0 && is_process_alive(existing_pid) {
+                return Err(format!(
+                    "Another sync process (PID {}) is currently running. \
+                     If this is incorrect, remove {}",
+                    existing_pid,
+                    lock_path.display()
+                ));
+            }
+            // Lock is stale or owner is dead — reclaim it
+        }
+
+        // Write our PID to the lock file
+        let pid = std::process::id();
+        fs::write(&lock_path, pid.to_string())
+            .map_err(|e| format!("Failed to create lock file: {}", e))?;
+
+        Ok(SyncLock { path: lock_path })
+    }
+}
+
+impl Drop for SyncLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Check whether a process with the given PID is alive.
+///
+/// Uses `kill -0` on Unix-like systems (macOS, Linux) to probe without
+/// sending a signal. Falls back to assuming alive on other platforms
+/// (the stale-time check provides the safety net).
+fn is_process_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, rely on the stale-time heuristic.
+        let _ = pid;
+        true
+    }
+}
+
 /// Perform a full or incremental sync of a workspace into the registry.
 pub fn sync_workspace(
     conn: &Connection,
@@ -60,6 +153,8 @@ pub fn sync_workspace(
     architect_dir: &Path,
     force_full: bool,
 ) -> Result<SyncStats, String> {
+    let _lock = SyncLock::acquire(architect_dir)?;
+
     let sync_log_path = architect_dir.join("sync.log");
     let mut sync_log = if force_full {
         SyncLog::default()
@@ -121,7 +216,13 @@ pub fn sync_workspace(
             }
 
             // Check content hash for incremental sync
-            let content_hash = file_content_hash(&file_path);
+            let content_hash = match file_content_hash(&file_path) {
+                Ok(hash) => hash,
+                Err(e) => {
+                    stats.parse_errors.push((module_info.path.clone(), e));
+                    continue;
+                }
+            };
             if !sync_log.needs_sync(&module_info.path, &content_hash) {
                 stats.modules_skipped += 1;
                 continue;
@@ -226,15 +327,12 @@ pub fn sync_workspace(
     Ok(stats)
 }
 
-fn file_content_hash(path: &Path) -> String {
-    match fs::read(path) {
-        Ok(contents) => {
-            let mut hasher = Sha256::new();
-            hasher.update(&contents);
-            format!("{:x}", hasher.finalize())
-        }
-        Err(_) => String::new(),
-    }
+fn file_content_hash(path: &Path) -> Result<String, String> {
+    let contents = fs::read(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&contents);
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Query all planned/wip symbols for a module so they can be preserved across sync.

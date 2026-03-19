@@ -330,7 +330,7 @@ pub fn register_plan(
         let module_id = match crate::registry::find_module_by_path(conn, &action.target)
             .map_err(|e| format!("DB error: {}", e))?
         {
-            Some(m) => m.id.unwrap(),
+            Some(m) => m.id.ok_or_else(|| "Module found but has no ID".to_string())?,
             None => {
                 // Module doesn't exist yet — skip (will be created on sync)
                 continue;

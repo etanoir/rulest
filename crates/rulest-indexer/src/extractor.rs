@@ -69,12 +69,9 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         let vis = convert_visibility(&node.vis);
         let line = node.sig.ident.span().start().line as u32;
 
-        // Detect FFI functions: extern "C"/"system" ABI, #[no_mangle], or #[export_name]
+        // Detect FFI functions: any explicit ABI, #[no_mangle], or #[export_name]
         let has_ffi_abi = node.sig.abi.as_ref().is_some_and(|abi| {
-            abi.name.as_ref().is_some_and(|lit| {
-                let val = lit.value();
-                val == "C" || val == "system"
-            })
+            abi.name.is_some()  // Any explicit ABI (C, system, stdcall, fastcall, etc.)
         });
         let is_ffi = has_ffi_abi
             || has_attribute(&node.attrs, "no_mangle")
@@ -416,7 +413,7 @@ fn format_generics(generics: &syn::Generics) -> String {
     let params = &generics.params;
     let generic_params = quote::quote!(#params).to_string();
     let where_part = if let Some(where_clause) = &generics.where_clause {
-        format!(" {}", quote::quote!(#where_clause).to_string())
+        format!(" {}", quote::quote!(#where_clause))
     } else {
         String::new()
     };
@@ -821,6 +818,13 @@ mod tests {
             "signature should contain extern: {}",
             sig
         );
+    }
+
+    #[test]
+    fn test_extract_ffi_stdcall() {
+        let source = r#"pub extern "stdcall" fn win_callback(x: i32) -> i32 { x }"#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::FfiFunction);
     }
 
     #[test]

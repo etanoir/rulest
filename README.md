@@ -267,6 +267,7 @@ Build the workspace and automatically sync the registry. Equivalent to running `
 .architect/registry.db
 .architect/registry.db-*
 .architect/sync.log
+.architect/sync.lock
 ```
 
 Commit `.architect/seed.sql` — it contains your architectural decisions and is the source of truth for ownership rules. The database is rebuilt from source code + seed on any machine.
@@ -292,6 +293,24 @@ The registry's power comes from the rules you define. Start with a few high-valu
 ### Advisory responses guide, not block
 
 Queries return advisories, not hard errors. The AI agent (or human) decides what to do with them. This is by design — the tool provides architectural awareness, not enforcement. Use `settings.json` deny rules for hard enforcement on critical files.
+
+### FFI function detection
+
+The indexer detects FFI functions — any function with an explicit ABI (`extern "C"`, `extern "system"`, `extern "stdcall"`, etc.), `#[no_mangle]`, or `#[export_name]` attributes. These are indexed as `ffi_function` kind. Functions inside `extern "C" { }` blocks are also captured.
+
+### Generic parameters in signatures
+
+Signatures include full generic parameters and lifetimes. `fn process<T: Clone + Send>(x: T) -> T` is stored with generics intact, not stripped to `fn process(x: T) -> T`.
+
+### Content-based incremental sync
+
+Sync uses SHA-256 content hashes (not file modification times) to detect changes. This means `git checkout`, `git rebase`, and `git stash pop` won't cause stale registries. Old sync.log files from pre-1.2.0 will trigger an automatic full resync.
+
+### Concurrency
+
+Rulest uses a file-based lock (`.architect/sync.lock`) to prevent concurrent sync operations from corrupting the registry. If a sync is already running, the second invocation will fail with a clear error message. Stale locks (older than 10 minutes) are automatically cleaned up.
+
+The MCP server is single-threaded (stdio-based). Multiple Claude Code sessions should each have their own MCP server instance.
 
 ### The registry stores signatures, not code
 
