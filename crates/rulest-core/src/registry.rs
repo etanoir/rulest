@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS symbols (
     signature TEXT,
     status TEXT NOT NULL DEFAULT 'stable',
     created_by TEXT,
-    created_at TEXT
+    created_at TEXT,
+    updated_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
@@ -75,8 +76,8 @@ pub fn create_schema(conn: &Connection) -> SqlResult<()> {
 /// Insert a crate, returning its id.
 pub fn insert_crate(conn: &Connection, c: &Crate) -> SqlResult<i64> {
     conn.execute(
-        "INSERT OR REPLACE INTO crates (name, path, description) VALUES (?1, ?2, ?3)",
-        rusqlite::params![c.name, c.path, c.description],
+        "INSERT OR REPLACE INTO crates (name, path, description, bounded_context) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![c.name, c.path, c.description, c.bounded_context],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -93,7 +94,7 @@ pub fn insert_module(conn: &Connection, m: &Module) -> SqlResult<i64> {
 /// Insert a symbol, returning its id.
 pub fn insert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO symbols (module_id, name, kind, visibility, signature, status, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO symbols (module_id, name, kind, visibility, signature, status, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             s.module_id,
             s.name,
@@ -103,6 +104,7 @@ pub fn insert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
             s.status.as_str(),
             s.created_by,
             s.created_at,
+            s.updated_at,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -121,8 +123,8 @@ pub fn upsert_symbol(conn: &Connection, s: &Symbol) -> SqlResult<i64> {
 
     if let Some(id) = existing {
         conn.execute(
-            "UPDATE symbols SET visibility = ?1, signature = ?2, status = ?3 WHERE id = ?4",
-            rusqlite::params![s.visibility.as_str(), s.signature, s.status.as_str(), id],
+            "UPDATE symbols SET visibility = ?1, signature = ?2, status = ?3, updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![s.visibility.as_str(), s.signature, s.status.as_str(), s.updated_at, id],
         )?;
         Ok(id)
     } else {
@@ -184,7 +186,7 @@ pub fn find_module_by_path(conn: &Connection, path: &str) -> SqlResult<Option<Mo
 /// Find a crate by name.
 pub fn find_crate_by_name(conn: &Connection, name: &str) -> SqlResult<Option<Crate>> {
     let mut stmt =
-        conn.prepare("SELECT id, name, path, description FROM crates WHERE name = ?1")?;
+        conn.prepare("SELECT id, name, path, description, bounded_context FROM crates WHERE name = ?1")?;
     let result = stmt
         .query_row(rusqlite::params![name], |row| {
             Ok(Crate {
@@ -192,6 +194,7 @@ pub fn find_crate_by_name(conn: &Connection, name: &str) -> SqlResult<Option<Cra
                 name: row.get(1)?,
                 path: row.get(2)?,
                 description: row.get(3)?,
+                bounded_context: row.get(4)?,
             })
         })
         .ok();
@@ -229,6 +232,7 @@ mod tests {
             name: "my-crate".to_string(),
             path: "/path/to/crate".to_string(),
             description: Some("A test crate".to_string()),
+            bounded_context: None,
         };
         let id = insert_crate(&conn, &c).unwrap();
         assert!(id > 0);
@@ -248,6 +252,7 @@ mod tests {
             name: "test".to_string(),
             path: ".".to_string(),
             description: None,
+            bounded_context: None,
         };
         let crate_id = insert_crate(&conn, &c).unwrap();
 
@@ -269,6 +274,7 @@ mod tests {
             status: SymbolStatus::Planned,
             created_by: None,
             created_at: None,
+            updated_at: None,
         };
         let id1 = upsert_symbol(&conn, &s).unwrap();
 

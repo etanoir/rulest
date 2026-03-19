@@ -52,6 +52,7 @@ pub fn extract_workspace(workspace_root: &Path) -> Result<WorkspaceInfo, String>
             name: package.name.clone(),
             path: relative_path.clone(),
             description: package.description.clone(),
+            bounded_context: None,
         });
 
         // Find all .rs files in the crate's src directory

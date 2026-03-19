@@ -10,6 +10,7 @@ pub struct Crate {
     pub name: String,
     pub path: String,
     pub description: Option<String>,
+    pub bounded_context: Option<String>,
 }
 
 /// A Rust module (source file) within a crate.
@@ -33,6 +34,7 @@ pub struct Symbol {
     pub status: SymbolStatus,
     pub created_by: Option<String>,
     pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 /// Relationships between symbols (calls, implements, depends_on).

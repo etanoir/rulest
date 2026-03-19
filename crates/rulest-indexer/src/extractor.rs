@@ -364,3 +364,161 @@ fn flatten_use_tree(tree: &UseTree, prefix: &str) -> Vec<(String, String)> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Helper: write source to a temp file, extract symbols, return the result.
+    fn extract_from_source(source: &str) -> ExtractedFile {
+        let mut path = std::env::temp_dir();
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("rulest_test_{}.rs", id));
+
+        let mut file = std::fs::File::create(&path).expect("Failed to create temp file");
+        file.write_all(source.as_bytes())
+            .expect("Failed to write temp file");
+        drop(file);
+
+        let result = extract_symbols(&path).expect("Failed to extract symbols");
+
+        // Clean up
+        let _ = std::fs::remove_file(&path);
+
+        result
+    }
+
+    #[test]
+    fn test_extract_function() {
+        let source = r#"pub fn foo(x: i32) -> bool { true }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "foo");
+        assert_eq!(sym.kind, SymbolKind::Function);
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("fn foo"), "signature should contain 'fn foo', got: {}", sig);
+        assert!(sig.contains("-> bool"), "signature should contain '-> bool', got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_struct() {
+        let source = r#"
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+        "#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "Point");
+        assert_eq!(sym.kind, SymbolKind::Struct);
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("struct Point"), "signature should contain 'struct Point', got: {}", sig);
+        assert!(sig.contains("x:"), "signature should contain field 'x:', got: {}", sig);
+        assert!(sig.contains("y:"), "signature should contain field 'y:', got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_enum() {
+        let source = r#"
+            pub enum Color {
+                Red,
+                Green,
+                Blue,
+            }
+        "#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "Color");
+        assert_eq!(sym.kind, SymbolKind::Enum);
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("enum Color"), "signature should contain 'enum Color', got: {}", sig);
+        assert!(sig.contains("Red"), "signature should contain variant 'Red', got: {}", sig);
+        assert!(sig.contains("Green"), "signature should contain variant 'Green', got: {}", sig);
+        assert!(sig.contains("Blue"), "signature should contain variant 'Blue', got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_trait() {
+        let source = r#"
+            pub trait Greetable {
+                fn greet(&self) -> String;
+            }
+        "#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "Greetable");
+        assert_eq!(sym.kind, SymbolKind::Trait);
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("trait Greetable"), "signature should contain 'trait Greetable', got: {}", sig);
+        assert!(sig.contains("fn greet"), "signature should contain 'fn greet', got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_impl_trait() {
+        let source = r#"
+            pub struct Foo;
+
+            impl std::fmt::Display for Foo {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, "Foo")
+                }
+            }
+        "#;
+        let extracted = extract_from_source(source);
+
+        // Should have the struct Foo and the method fmt
+        assert!(
+            extracted.symbols.iter().any(|s| s.name == "Foo" && s.kind == SymbolKind::Struct),
+            "Should extract struct Foo"
+        );
+        assert!(
+            extracted.symbols.iter().any(|s| s.name == "fmt" && s.kind == SymbolKind::Function),
+            "Should extract method fmt"
+        );
+
+        // Check trait_impls captures (Display, Foo)
+        assert_eq!(extracted.trait_impls.len(), 1);
+        let (trait_name, type_name) = &extracted.trait_impls[0];
+        assert!(
+            trait_name.contains("Display"),
+            "trait_impls should capture Display, got: {}", trait_name
+        );
+        assert_eq!(type_name, "Foo", "trait_impls should capture type Foo, got: {}", type_name);
+    }
+
+    #[test]
+    fn test_extract_pub_use() {
+        let source = r#"pub use crate::module::Symbol;"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "Symbol");
+        assert_eq!(sym.visibility, Visibility::Public);
+
+        let sig = sym.signature.as_ref().expect("signature should be present");
+        assert!(sig.contains("pub use"), "signature should contain 'pub use', got: {}", sig);
+        assert!(sig.contains("crate::module::Symbol"), "signature should contain the full path, got: {}", sig);
+    }
+}

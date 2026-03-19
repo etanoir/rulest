@@ -141,6 +141,7 @@ pub fn sync_workspace(
                             status: SymbolStatus::Stable,
                             created_by: None,
                             created_at: None,
+                            updated_at: None,
                         };
                         registry::insert_symbol(conn, &symbol)
                             .map_err(|e| format!("Failed to insert symbol: {}", e))?;
@@ -187,7 +188,7 @@ fn query_planned_wip_symbols(
     module_id: i64,
 ) -> Result<Vec<Symbol>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, module_id, name, kind, visibility, signature, status, created_by, created_at \
+        "SELECT id, module_id, name, kind, visibility, signature, status, created_by, created_at, updated_at \
          FROM symbols WHERE module_id = ?1 AND status IN ('planned', 'wip')",
     )?;
     let rows = stmt.query_map(rusqlite::params![module_id], |row| {
@@ -210,6 +211,7 @@ fn query_planned_wip_symbols(
                 .unwrap_or(SymbolStatus::Planned),
             created_by: row.get(7)?,
             created_at: row.get(8)?,
+            updated_at: row.get(9)?,
         })
     })?;
     rows.collect()

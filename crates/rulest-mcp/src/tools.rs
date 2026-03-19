@@ -162,3 +162,116 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rulest_core::models::*;
+    use rulest_core::registry::*;
+
+    /// Set up an in-memory DB with schema and test data.
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let c = Crate {
+            id: None,
+            name: "mylib".to_string(),
+            path: "crates/mylib".to_string(),
+            description: None,
+            bounded_context: None,
+        };
+        let crate_id = insert_crate(&conn, &c).unwrap();
+
+        let m = Module {
+            id: None,
+            crate_id,
+            path: "crates/mylib/src/utils.rs".to_string(),
+            name: "utils".to_string(),
+        };
+        let module_id = insert_module(&conn, &m).unwrap();
+
+        let s = Symbol {
+            id: None,
+            module_id,
+            name: "helper_fn".to_string(),
+            kind: SymbolKind::Function,
+            visibility: Visibility::Public,
+            signature: Some("fn helper_fn() -> bool".to_string()),
+            status: SymbolStatus::Stable,
+            created_by: None,
+            created_at: None,
+            updated_at: None,
+        };
+        insert_symbol(&conn, &s).unwrap();
+
+        conn
+    }
+
+    #[test]
+    fn test_validate_creation_tool() {
+        let conn = setup_test_db();
+        let result = call_tool(
+            &conn,
+            "validate_creation",
+            &json!({
+                "symbol_name": "helper_fn",
+                "target_module": "crates/other/src/lib.rs"
+            }),
+        );
+
+        assert!(result.get("advisories").is_some(), "Response should have 'advisories' key");
+        let advisories = result["advisories"].as_array().expect("advisories should be an array");
+        assert!(!advisories.is_empty(), "advisories should not be empty for an existing symbol");
+    }
+
+    #[test]
+    fn test_unknown_tool() {
+        let conn = setup_test_db();
+        let result = call_tool(&conn, "nonexistent_tool", &json!({}));
+
+        assert!(
+            result.get("error").is_some(),
+            "Response should have 'error' key for unknown tool"
+        );
+        let error_msg = result["error"].as_str().unwrap();
+        assert!(
+            error_msg.contains("Unknown tool"),
+            "Error message should mention unknown tool, got: {}",
+            error_msg
+        );
+    }
+
+    #[test]
+    fn test_register_plan_tool() {
+        let conn = setup_test_db();
+        let result = call_tool(
+            &conn,
+            "register_plan",
+            &json!({
+                "agent": "test-agent",
+                "actions": [
+                    {
+                        "action": "create",
+                        "symbol": "new_widget",
+                        "target": "crates/mylib/src/utils.rs",
+                        "kind": "function"
+                    }
+                ]
+            }),
+        );
+
+        // register_plan should succeed since the module exists
+        assert!(
+            result.get("error").is_none(),
+            "register_plan should not return an error, got: {:?}",
+            result
+        );
+        assert!(
+            result.get("registered").is_some(),
+            "Response should have 'registered' count"
+        );
+        let registered = result["registered"].as_u64().unwrap();
+        assert_eq!(registered, 1, "Should have registered 1 symbol");
+    }
+}

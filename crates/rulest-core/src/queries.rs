@@ -155,15 +155,15 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT s.name, s.created_by FROM symbols s
+            "SELECT s.name, s.created_by, s.updated_at FROM symbols s
              JOIN modules m ON s.module_id = m.id
              WHERE m.path LIKE ?1 AND s.status IN ('planned', 'wip')",
         )
         .unwrap();
 
-    let rows: Vec<(String, Option<String>)> = stmt
+    let rows: Vec<(String, Option<String>, Option<String>)> = stmt
         .query_map(params![format!("%{}%", module_path)], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .unwrap()
         .filter_map(|r| r.ok())
@@ -171,15 +171,21 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
 
     if !rows.is_empty() {
         // Group by agent
-        let symbols: Vec<String> = rows.iter().map(|(name, _)| name.clone()).collect();
+        let symbols: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
         let agent = rows
             .iter()
-            .find_map(|(_, a)| a.clone())
+            .find_map(|(_, a, _)| a.clone())
             .unwrap_or_else(|| "unknown".to_string());
+
+        // Use the most recent updated_at as last_activity info in the branch field
+        let last_activity = rows
+            .iter()
+            .filter_map(|(_, _, u)| u.clone())
+            .max();
 
         advisories.push(Advisory::WipConflict {
             agent,
-            branch: None,
+            branch: last_activity,
             symbols,
         });
     }
@@ -323,7 +329,8 @@ pub fn register_plan(
             signature: None,
             status,
             created_by: Some(agent.to_string()),
-            created_at: Some(now),
+            created_at: Some(now.clone()),
+            updated_at: Some(now),
         };
 
         crate::registry::upsert_symbol(conn, &symbol)
@@ -576,6 +583,7 @@ mod tests {
             name: "trading".to_string(),
             path: "crates/trading".to_string(),
             description: None,
+            bounded_context: None,
         };
         let crate_id = insert_crate(&conn, &c).unwrap();
 
@@ -597,6 +605,7 @@ mod tests {
             status: SymbolStatus::Stable,
             created_by: None,
             created_at: None,
+            updated_at: None,
         };
         insert_symbol(&conn, &s).unwrap();
 
@@ -610,6 +619,7 @@ mod tests {
             status: SymbolStatus::Stable,
             created_by: None,
             created_at: None,
+            updated_at: None,
         };
         insert_symbol(&conn, &s2).unwrap();
 
@@ -694,6 +704,7 @@ mod tests {
                 status: SymbolStatus::Wip,
                 created_by: None,
                 created_at: None,
+                updated_at: None,
             },
         )
         .unwrap();
@@ -706,5 +717,106 @@ mod tests {
             }
             other => panic!("Expected WipConflict, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_suggest_reuse() {
+        let conn = setup_test_db();
+        // "calculate_fee" exists in the test DB, search for "calculate fee"
+        let advisories = suggest_reuse(&conn, "calculate fee");
+
+        assert!(!advisories.is_empty(), "suggest_reuse should return advisories for a matching keyword");
+        // The keyword "calculate" should fuzzy-match "calculate_fee"
+        match &advisories[0] {
+            Advisory::ReuseExisting { existing, .. } => {
+                assert_eq!(existing.name, "calculate_fee");
+            }
+            Advisory::AmbiguousMatch { candidates } => {
+                assert!(
+                    candidates.iter().any(|c| c.name == "calculate_fee"),
+                    "Candidates should include 'calculate_fee', got: {:?}",
+                    candidates.iter().map(|c| &c.name).collect::<Vec<_>>()
+                );
+            }
+            other => panic!(
+                "Expected ReuseExisting or AmbiguousMatch, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_validate_plan() {
+        let conn = setup_test_db();
+        let actions = vec![
+            PlannedAction {
+                action: "create".to_string(),
+                symbol: "brand_new_fn".to_string(),
+                target: "crates/other/src/lib.rs".to_string(),
+                crate_name: None,
+                kind: Some("function".to_string()),
+            },
+            PlannedAction {
+                action: "create".to_string(),
+                symbol: "calculate_fee".to_string(),
+                target: "crates/other/src/lib.rs".to_string(),
+                crate_name: None,
+                kind: Some("function".to_string()),
+            },
+        ];
+
+        let report = validate_plan(&conn, &actions);
+        assert_eq!(report.results.len(), 2, "Plan report should have 2 results");
+        assert_eq!(report.summary.total_actions, 2, "Summary total_actions should be 2");
+
+        // First action is brand new, should have SafeToCreate
+        let first = &report.results[0];
+        assert!(
+            first.advisories.iter().any(|a| matches!(a, Advisory::SafeToCreate { .. })),
+            "brand_new_fn should be SafeToCreate, got: {:?}",
+            first.advisories
+        );
+
+        // Second action collides with existing "calculate_fee"
+        let second = &report.results[1];
+        assert!(
+            second.advisories.iter().any(|a| matches!(a, Advisory::ReuseExisting { .. })),
+            "calculate_fee should trigger ReuseExisting, got: {:?}",
+            second.advisories
+        );
+
+        // Summary should reflect the reuse
+        assert!(report.summary.reuse >= 1, "Summary should count at least 1 reuse");
+    }
+
+    #[test]
+    fn test_register_plan() {
+        let conn = setup_test_db();
+        let actions = vec![PlannedAction {
+            action: "create".to_string(),
+            symbol: "planned_symbol".to_string(),
+            target: "crates/trading/src/fees.rs".to_string(),
+            crate_name: Some("trading".to_string()),
+            kind: Some("function".to_string()),
+        }];
+
+        let count = register_plan(&conn, &actions, "test-agent").unwrap();
+        assert_eq!(count, 1, "Should register 1 symbol");
+
+        // Verify the symbol was inserted with status=planned and created_by=test-agent
+        let (status, created_by): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, created_by FROM symbols WHERE name = 'planned_symbol'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("planned_symbol should exist in DB");
+
+        assert_eq!(status, "planned", "Status should be 'planned'");
+        assert_eq!(
+            created_by.as_deref(),
+            Some("test-agent"),
+            "created_by should be 'test-agent'"
+        );
     }
 }
