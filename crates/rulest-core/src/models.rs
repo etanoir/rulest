@@ -70,6 +70,7 @@ pub struct OwnershipRule {
 #[serde(rename_all = "snake_case")]
 pub enum SymbolKind {
     Function,
+    FfiFunction,
     Struct,
     Enum,
     Trait,
@@ -84,6 +85,7 @@ impl SymbolKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Function => "function",
+            Self::FfiFunction => "ffi_function",
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Trait => "trait",
@@ -102,6 +104,7 @@ impl FromStr for SymbolKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "function" => Ok(Self::Function),
+            "ffi_function" => Ok(Self::FfiFunction),
             "struct" => Ok(Self::Struct),
             "enum" => Ok(Self::Enum),
             "trait" => Ok(Self::Trait),

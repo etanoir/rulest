@@ -3,9 +3,9 @@ use std::path::Path;
 
 use rulest_core::models::{SymbolKind, Visibility};
 use syn::{
-    visit::Visit, Fields, FnArg, ImplItem, ItemConst, ItemEnum, ItemFn, ItemImpl,
-    ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait, ItemType, ItemUse, ReturnType,
-    TraitItem, UseTree,
+    visit::Visit, Fields, FnArg, ForeignItem, ImplItem, ItemConst, ItemEnum, ItemFn,
+    ItemForeignMod, ItemImpl, ItemMacro, ItemMod, ItemStatic, ItemStruct, ItemTrait,
+    ItemType, ItemUse, ReturnType, TraitItem, UseTree,
 };
 
 /// Extracted symbols from a single Rust source file.
@@ -67,12 +67,30 @@ impl SymbolVisitor {
 impl<'ast> Visit<'ast> for SymbolVisitor {
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
         let vis = convert_visibility(&node.vis);
-        let sig = format_fn_signature(&node.sig);
         let line = node.sig.ident.span().start().line as u32;
+
+        // Detect FFI functions: extern "C"/"system" ABI, #[no_mangle], or #[export_name]
+        let has_ffi_abi = node.sig.abi.as_ref().is_some_and(|abi| {
+            abi.name.as_ref().is_some_and(|lit| {
+                let val = lit.value();
+                val == "C" || val == "system"
+            })
+        });
+        let is_ffi = has_ffi_abi
+            || has_attribute(&node.attrs, "no_mangle")
+            || has_attribute(&node.attrs, "export_name");
+
+        let kind = if is_ffi {
+            SymbolKind::FfiFunction
+        } else {
+            SymbolKind::Function
+        };
+
+        let sig = format_fn_signature(&node.sig);
 
         self.symbols.push(ExtractedSymbol {
             name: node.sig.ident.to_string(),
-            kind: SymbolKind::Function,
+            kind,
             visibility: vis,
             signature: Some(sig),
             line_number: Some(line),
@@ -115,7 +133,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             name: node.ident.to_string(),
             kind: SymbolKind::Struct,
             visibility: vis,
-            signature: Some(format!("struct {}{}", node.ident, fields_str)),
+            signature: Some(format!("struct {}{}{}", node.ident, format_generics(&node.generics), fields_str)),
             line_number: Some(line),
             scope: self.current_scope(),
         });
@@ -132,7 +150,7 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             name: node.ident.to_string(),
             kind: SymbolKind::Enum,
             visibility: vis,
-            signature: Some(format!("enum {} {{ {} }}", node.ident, variants.join(", "))),
+            signature: Some(format!("enum {}{} {{ {} }}", node.ident, format_generics(&node.generics), variants.join(", "))),
             line_number: Some(line),
             scope: self.current_scope(),
         });
@@ -160,8 +178,9 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
             kind: SymbolKind::Trait,
             visibility: vis,
             signature: Some(format!(
-                "trait {} {{ {} }}",
+                "trait {}{} {{ {} }}",
                 node.ident,
+                format_generics(&node.generics),
                 methods.join("; ")
             )),
             line_number: Some(line),
@@ -330,6 +349,43 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
 
         syn::visit::visit_item_use(self, node);
     }
+
+    fn visit_item_foreign_mod(&mut self, node: &'ast ItemForeignMod) {
+        let abi_str = node.abi.name.as_ref().map(|lit| lit.value());
+
+        for item in &node.items {
+            if let ForeignItem::Fn(foreign_fn) = item {
+                let vis = convert_visibility(&foreign_fn.vis);
+                let line = foreign_fn.sig.ident.span().start().line as u32;
+
+                let sig = if let Some(ref abi) = abi_str {
+                    format!(
+                        "extern \"{}\" {}",
+                        abi,
+                        format_fn_signature(&foreign_fn.sig)
+                    )
+                } else {
+                    format!("extern {}", format_fn_signature(&foreign_fn.sig))
+                };
+
+                self.symbols.push(ExtractedSymbol {
+                    name: foreign_fn.sig.ident.to_string(),
+                    kind: SymbolKind::FfiFunction,
+                    visibility: vis,
+                    signature: Some(sig),
+                    line_number: Some(line),
+                    scope: self.current_scope(),
+                });
+            }
+        }
+
+        syn::visit::visit_item_foreign_mod(self, node);
+    }
+}
+
+/// Check if a list of attributes contains an attribute with the given name.
+fn has_attribute(attrs: &[syn::Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident(name))
 }
 
 fn convert_visibility(vis: &syn::Visibility) -> Visibility {
@@ -351,6 +407,20 @@ fn convert_visibility(vis: &syn::Visibility) -> Visibility {
         }
         syn::Visibility::Inherited => Visibility::Private,
     }
+}
+
+fn format_generics(generics: &syn::Generics) -> String {
+    if generics.params.is_empty() {
+        return String::new();
+    }
+    let params = &generics.params;
+    let generic_params = quote::quote!(#params).to_string();
+    let where_part = if let Some(where_clause) = &generics.where_clause {
+        format!(" {}", quote::quote!(#where_clause).to_string())
+    } else {
+        String::new()
+    };
+    format!("<{}>{}",  generic_params, where_part)
 }
 
 fn format_fn_signature(sig: &syn::Signature) -> String {
@@ -388,7 +458,19 @@ fn format_fn_signature(sig: &syn::Signature) -> String {
         ""
     };
 
-    format!("{}fn {}({}){}", async_prefix, sig.ident, params.join(", "), ret)
+    let abi_prefix = match &sig.abi {
+        Some(abi) => match &abi.name {
+            Some(lit) => format!("extern \"{}\" ", lit.value()),
+            None => "extern ".to_string(),
+        },
+        None => String::new(),
+    };
+
+    let generics = format_generics(&sig.generics);
+
+    format!(
+        "{}{}fn {}{}({}){}", abi_prefix, async_prefix, sig.ident, generics, params.join(", "), ret
+    )
 }
 
 fn quote_type(ty: &syn::Type) -> String {
@@ -432,7 +514,7 @@ fn flatten_use_tree(tree: &UseTree, prefix: &str) -> Vec<(String, String)> {
             vec![(alias, full_path)]
         }
         UseTree::Glob(_) => {
-            // `pub use module::*` — record as a glob re-export
+            // `pub use module::*` -- record as a glob re-export
             let full_path = if prefix.is_empty() {
                 "*".to_string()
             } else {
@@ -626,5 +708,126 @@ mod tests {
 
         let sig = sym.signature.as_ref().expect("signature should be present");
         assert!(sig.contains("macro_rules!"), "signature should contain 'macro_rules!', got: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_generic_function() {
+        let source = r#"pub fn process<T: Clone + Send>(items: Vec<T>) -> Vec<T> { items }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sym = &extracted.symbols[0];
+        assert_eq!(sym.name, "process");
+        let sig = sym.signature.as_ref().unwrap();
+        assert!(sig.contains("<"), "signature should contain generics: {}", sig);
+        assert!(sig.contains("Clone"), "signature should contain bound Clone: {}", sig);
+        assert!(sig.contains("Send"), "signature should contain bound Send: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_generic_struct() {
+        let source = r#"pub struct Wrapper<T: Clone> { pub inner: T }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(sig.contains("<"), "signature should contain generics: {}", sig);
+        assert!(sig.contains("Clone"), "signature should contain bound Clone: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_generic_enum() {
+        let source = r#"pub enum Option<T> { Some(T), None }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(sig.contains("<T>"), "signature should contain generics: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_generic_trait() {
+        let source = r#"pub trait Convert<T> { fn convert(&self) -> T; }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(sig.contains("<T>"), "signature should contain generics: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_lifetime_function() {
+        let source = r#"pub fn first<'a>(items: &'a [u32]) -> &'a u32 { &items[0] }"#;
+        let extracted = extract_from_source(source);
+
+        assert_eq!(extracted.symbols.len(), 1);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(sig.contains("<"), "signature should contain lifetime: {}", sig);
+        assert!(sig.contains("'a"), "signature should contain 'a: {}", sig);
+    }
+
+    #[test]
+    fn test_extract_ffi_function() {
+        let source = r#"
+            #[no_mangle]
+            pub extern "C" fn my_ffi_func(x: i32) -> i32 { x }
+        "#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols.len(), 1);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::FfiFunction);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(
+            sig.contains("extern"),
+            "signature should contain extern: {}",
+            sig
+        );
+    }
+
+    #[test]
+    fn test_extract_ffi_no_mangle_only() {
+        let source = r#"
+            #[no_mangle]
+            pub fn my_func(x: i32) -> i32 { x }
+        "#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols.len(), 1);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::FfiFunction);
+    }
+
+    #[test]
+    fn test_extract_ffi_export_name() {
+        let source = r#"
+            #[export_name = "custom_name"]
+            pub fn my_func(x: i32) -> i32 { x }
+        "#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols.len(), 1);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::FfiFunction);
+    }
+
+    #[test]
+    fn test_extract_foreign_mod() {
+        let source = r#"
+            extern "C" {
+                fn external_func(x: i32) -> i32;
+            }
+        "#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols.len(), 1);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::FfiFunction);
+        let sig = extracted.symbols[0].signature.as_ref().unwrap();
+        assert!(
+            sig.contains("extern"),
+            "signature should contain extern: {}",
+            sig
+        );
+    }
+
+    #[test]
+    fn test_regular_function_not_ffi() {
+        let source = r#"pub fn regular(x: i32) -> i32 { x }"#;
+        let extracted = extract_from_source(source);
+        assert_eq!(extracted.symbols.len(), 1);
+        assert_eq!(extracted.symbols[0].kind, SymbolKind::Function);
     }
 }

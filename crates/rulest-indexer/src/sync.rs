@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::time::SystemTime;
 
 use rulest_core::models::{Module, Relationship, RelationshipKind, Symbol, SymbolKind, SymbolStatus, Visibility};
 use rulest_core::registry;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::cargo_meta;
 use crate::extractor;
@@ -20,12 +20,14 @@ pub struct SyncStats {
     pub symbols_updated: usize,
     pub symbols_removed: usize,
     pub modules_skipped: usize,
+    /// Parse errors encountered: `(file_path, error_message)`.
+    pub parse_errors: Vec<(String, String)>,
 }
 
-/// Persistent sync state tracking file mtimes.
+/// Persistent sync state tracking file content hashes.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct SyncLog {
-    files: HashMap<String, u64>, // path -> mtime as secs since epoch
+    files: HashMap<String, String>, // path -> SHA-256 hex digest
 }
 
 impl SyncLog {
@@ -43,9 +45,9 @@ impl SyncLog {
         fs::write(path, json).map_err(|e| format!("Failed to write sync log: {}", e))
     }
 
-    fn needs_sync(&self, file_path: &str, current_mtime: u64) -> bool {
+    fn needs_sync(&self, file_path: &str, current_hash: &str) -> bool {
         match self.files.get(file_path) {
-            Some(&stored_mtime) => current_mtime > stored_mtime,
+            Some(stored_hash) => stored_hash != current_hash,
             None => true,
         }
     }
@@ -118,9 +120,9 @@ pub fn sync_workspace(
                 continue;
             }
 
-            // Check mtime for incremental sync
-            let mtime = file_mtime(&file_path);
-            if !sync_log.needs_sync(&module_info.path, mtime) {
+            // Check content hash for incremental sync
+            let content_hash = file_content_hash(&file_path);
+            if !sync_log.needs_sync(&module_info.path, &content_hash) {
                 stats.modules_skipped += 1;
                 continue;
             }
@@ -175,7 +177,7 @@ pub fn sync_workspace(
                     all_trait_impls.extend(extracted.trait_impls);
                 }
                 Err(e) => {
-                    eprintln!("Warning: {}", e);
+                    stats.parse_errors.push((module_info.path.clone(), e));
                 }
             }
 
@@ -191,7 +193,7 @@ pub fn sync_workspace(
             }
 
             // Update sync log
-            sync_log.files.insert(module_info.path.clone(), mtime);
+            sync_log.files.insert(module_info.path.clone(), content_hash);
         }
     }
 
@@ -224,13 +226,15 @@ pub fn sync_workspace(
     Ok(stats)
 }
 
-fn file_mtime(path: &Path) -> u64 {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+fn file_content_hash(path: &Path) -> String {
+    match fs::read(path) {
+        Ok(contents) => {
+            let mut hasher = Sha256::new();
+            hasher.update(&contents);
+            format!("{:x}", hasher.finalize())
+        }
+        Err(_) => String::new(),
+    }
 }
 
 /// Query all planned/wip symbols for a module so they can be preserved across sync.

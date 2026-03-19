@@ -32,6 +32,12 @@ pub fn run(workspace_path: &str, force_full: bool) -> Result<(), String> {
     println!("  Modules skipped:  {}", stats.modules_skipped);
     println!("  Symbols added:    {}", stats.symbols_added);
     println!("  Symbols removed:  {}", stats.symbols_removed);
+    if !stats.parse_errors.is_empty() {
+        println!("  Parse errors:     {}", stats.parse_errors.len());
+        for (path, err) in &stats.parse_errors {
+            println!("    - {}: {}", path, err);
+        }
+    }
 
     Ok(())
 }

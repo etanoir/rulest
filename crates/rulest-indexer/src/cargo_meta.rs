@@ -90,9 +90,28 @@ pub fn extract_workspace(workspace_root: &Path) -> Result<WorkspaceInfo, String>
     })
 }
 
+/// Returns `true` if the directory entry should be excluded from walking.
+///
+/// Excludes:
+/// - `.git` directories
+/// - `target` directories
+/// - Git submodule directories (contain a `.git` file)
+fn is_excluded_dir(entry: &walkdir::DirEntry) -> bool {
+    if !entry.file_type().is_dir() {
+        return false;
+    }
+    let file_name = entry.file_name().to_string_lossy();
+    if file_name == ".git" || file_name == "target" {
+        return true;
+    }
+    // A directory containing a `.git` file is a git submodule checkout
+    entry.path().join(".git").is_file()
+}
+
 fn collect_rs_files(dir: &Path, base_path: &str, modules: &mut Vec<ModuleInfo>) {
     let walker = walkdir::WalkDir::new(dir)
         .into_iter()
+        .filter_entry(|e| !is_excluded_dir(e))
         .filter_map(|e| e.ok());
 
     for entry in walker {

@@ -40,7 +40,7 @@ pub fn run(workspace_path: &str) -> Result<(), String> {
     if seed_path.exists() {
         let sql = fs::read_to_string(&seed_path)
             .map_err(|e| format!("Failed to read seed.sql: {}", e))?;
-        registry::execute_sql(&conn, &sql)
+        registry::execute_seed_sql(&conn, &sql)
             .map_err(|e| format!("Failed to execute seed.sql: {}", e))?;
         println!("Loaded existing seed.sql into registry");
     } else {

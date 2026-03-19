@@ -5,6 +5,10 @@ use rusqlite::{Connection, Result as SqlResult};
 #[allow(unused_imports)]
 use crate::models::*;
 
+/// Current schema version. Set to 2 as the first migration-aware version.
+/// Versions 0 and 1 are considered pre-migration databases.
+pub const SCHEMA_VERSION: i32 = 2;
+
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS crates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +91,64 @@ pub fn open_registry(path: &Path) -> SqlResult<Connection> {
     Ok(conn)
 }
 
-/// Create the schema tables if they don't exist.
+/// Read the current schema version from the database using `PRAGMA user_version`.
+pub fn get_schema_version(conn: &Connection) -> SqlResult<i32> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+/// Set the schema version in the database using `PRAGMA user_version`.
+pub fn set_schema_version(conn: &Connection, version: i32) -> SqlResult<()> {
+    // PRAGMA statements don't support parameter binding, so we format directly.
+    // The version is an i32 so there is no injection risk.
+    conn.execute_batch(&format!("PRAGMA user_version = {version}"))
+}
+
+/// Create or migrate the schema to the current version.
+///
+/// - If the database is fresh (user_version == 0): runs full SCHEMA_SQL and sets version.
+/// - If the database is behind: runs incremental migrations.
+/// - If already current: does nothing.
+/// - If ahead of this binary: returns an error.
 pub fn create_schema(conn: &Connection) -> SqlResult<()> {
+    let current = get_schema_version(conn)?;
+
+    if current == 0 {
+        // Fresh database or pre-migration database: apply full schema
+        conn.execute_batch(SCHEMA_SQL)?;
+        set_schema_version(conn, SCHEMA_VERSION)?;
+    } else if current < SCHEMA_VERSION {
+        // Existing database that needs migration
+        migrate(conn, current)?;
+        set_schema_version(conn, SCHEMA_VERSION)?;
+    } else if current == SCHEMA_VERSION {
+        // Already up to date — nothing to do
+    } else {
+        // Database is from a newer version of rulest
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some(format!(
+                "database schema version {current} is newer than supported version {SCHEMA_VERSION}"
+            )),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Run migrations sequentially from `from_version` up to SCHEMA_VERSION.
+fn migrate(conn: &Connection, from_version: i32) -> SqlResult<()> {
+    if from_version < 2 {
+        migrate_to_v2(conn)?;
+    }
+    // Future: if from_version < 3 { migrate_to_v3(conn)?; }
+    Ok(())
+}
+
+/// Migration to v2: establishes migration framework.
+/// This is a no-op since the actual table schema hasn't changed —
+/// it just marks the database as migration-aware.
+fn migrate_to_v2(conn: &Connection) -> SqlResult<()> {
+    // Ensure all tables exist (idempotent due to IF NOT EXISTS)
     conn.execute_batch(SCHEMA_SQL)
 }
 
@@ -269,9 +329,104 @@ pub fn find_symbol_id_by_name(conn: &Connection, name: &str) -> SqlResult<Option
     Ok(result)
 }
 
-/// Execute raw SQL (for seed.sql imports).
-pub fn execute_sql(conn: &Connection, sql: &str) -> SqlResult<()> {
-    conn.execute_batch(sql)
+/// Execute validated seed SQL (for seed.sql imports).
+///
+/// Only allows:
+/// - `INSERT INTO ownership_rules ...` statements
+/// - SQL comments (`--` and `/* ... */`)
+/// - Empty/whitespace-only lines
+///
+/// Rejects any other statement (DROP, DELETE, UPDATE, ALTER, ATTACH, PRAGMA, CREATE,
+/// or INSERTs targeting tables other than `ownership_rules`).
+pub fn execute_seed_sql(conn: &Connection, sql: &str) -> SqlResult<()> {
+    let mut rejected = Vec::new();
+
+    for raw_stmt in sql.split(';') {
+        let stmt = strip_comments(raw_stmt).trim().to_string();
+        if stmt.is_empty() {
+            continue;
+        }
+        let upper = stmt.to_uppercase();
+        let first_word = upper.split_whitespace().next().unwrap_or("");
+
+        match first_word {
+            "INSERT" => {
+                let normalised: String = upper.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !normalised.starts_with("INSERT INTO OWNERSHIP_RULES") {
+                    rejected.push(stmt);
+                }
+            }
+            _ => {
+                rejected.push(stmt);
+            }
+        }
+    }
+
+    if !rejected.is_empty() {
+        let msg = format!(
+            "seed.sql contains {} rejected statement(s):\n{}",
+            rejected.len(),
+            rejected
+                .iter()
+                .enumerate()
+                .map(|(i, s)| format!("  {}: {}", i + 1, s))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        return Err(rusqlite::Error::InvalidParameterName(msg));
+    }
+
+    for raw_stmt in sql.split(';') {
+        let stmt = strip_comments(raw_stmt).trim().to_string();
+        if stmt.is_empty() {
+            continue;
+        }
+        conn.execute_batch(&stmt)?;
+    }
+
+    Ok(())
+}
+
+/// Remove SQL comments (both `--` line comments and `/* ... */` block comments)
+/// from a SQL fragment, preserving string literals.
+fn strip_comments(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let chars: Vec<char> = sql.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '\'' {
+            result.push(chars[i]);
+            i += 1;
+            while i < len {
+                result.push(chars[i]);
+                if chars[i] == '\'' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if chars[i] == '-' && i + 1 < len && chars[i + 1] == '-' {
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if chars[i] == '/' && i + 1 < len && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }
 
 #[cfg(test)]
@@ -365,5 +520,161 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, "stable");
+    }
+
+    #[test]
+    fn test_seed_sql_valid_insert() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = "INSERT INTO ownership_rules (crate_name, description, kind) VALUES ('my-crate', 'owns core logic', 'must_own');";
+        execute_seed_sql(&conn, sql).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ownership_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_seed_sql_rejects_drop() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = "DROP TABLE ownership_rules;";
+        let result = execute_seed_sql(&conn, sql);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("rejected"), "error should mention rejected statements: {err_msg}");
+    }
+
+    #[test]
+    fn test_seed_sql_rejects_delete() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = "DELETE FROM ownership_rules;";
+        let result = execute_seed_sql(&conn, sql);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_seed_sql_rejects_update() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = "UPDATE ownership_rules SET kind = 'shared_with' WHERE id = 1;";
+        let result = execute_seed_sql(&conn, sql);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_seed_sql_allows_comments_and_whitespace() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = r#"
+-- This is a comment
+/* Block comment */
+
+INSERT INTO ownership_rules (crate_name, description, kind) VALUES ('a', 'rule a', 'must_own');
+
+-- Another comment
+INSERT INTO ownership_rules (crate_name, description, kind) VALUES ('b', 'rule b', 'must_not');
+"#;
+        execute_seed_sql(&conn, sql).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM ownership_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_seed_sql_rejects_insert_into_other_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        let sql = "INSERT INTO crates (name, path) VALUES ('evil', '/tmp');";
+        let result = execute_seed_sql(&conn, sql);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fresh_database_gets_schema_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), 0);
+
+        create_schema(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_create_schema_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn).unwrap();
+
+        // Insert some data
+        let c = Crate {
+            id: None,
+            name: "idempotent-test".to_string(),
+            path: "/tmp".to_string(),
+            description: None,
+            bounded_context: None,
+        };
+        insert_crate(&conn, &c).unwrap();
+
+        // Run create_schema again — should be a no-op
+        create_schema(&conn).unwrap();
+
+        // Data should still be there
+        let found = find_crate_by_name(&conn, "idempotent-test").unwrap();
+        assert!(found.is_some());
+        assert_eq!(get_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_get_set_schema_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), 0);
+
+        set_schema_version(&conn, 5).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), 5);
+
+        set_schema_version(&conn, 42).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_newer_version_returns_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        set_schema_version(&conn, SCHEMA_VERSION + 1).unwrap();
+
+        let result = create_schema(&conn);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_migration_from_pre_migration_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Simulate a pre-migration database: tables exist but no user_version set
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), 0);
+
+        // create_schema should detect version 0 and set it to SCHEMA_VERSION
+        create_schema(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_migration_from_v1() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Simulate a v1 database
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+        set_schema_version(&conn, 1).unwrap();
+
+        // create_schema should migrate from v1 to SCHEMA_VERSION
+        create_schema(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 }
