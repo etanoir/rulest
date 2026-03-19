@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.8.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/etanoir/rulest"
@@ -25,3 +25,4 @@ publish = false
 [dev-dependencies]
 rulest-core = { path = "crates/rulest-core" }
 rulest-indexer = { path = "crates/rulest-indexer" }
+rusqlite = { version = "0.31", features = ["bundled"] }

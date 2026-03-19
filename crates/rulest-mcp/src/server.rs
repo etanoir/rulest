@@ -159,3 +159,86 @@ async fn write_response(
         .map_err(|e| format!("Failed to flush: {}", e))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rulest_core::registry;
+
+    fn setup_test_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        registry::create_schema(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_handle_initialize() {
+        let response = handle_initialize(Some(json!(1)));
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 1);
+        assert!(response["result"]["protocolVersion"].is_string());
+        assert!(response["result"]["capabilities"]["tools"].is_object());
+        assert_eq!(response["result"]["serverInfo"]["name"], "rulest");
+    }
+
+    #[test]
+    fn test_handle_tools_list() {
+        let response = handle_tools_list(Some(json!(2)));
+        assert_eq!(response["id"], 2);
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 7, "Should expose 7 MCP tools");
+        // Verify all tool names are present
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"validate_creation"));
+        assert!(names.contains(&"validate_dependency"));
+        assert!(names.contains(&"validate_boundary"));
+        assert!(names.contains(&"check_wip"));
+        assert!(names.contains(&"suggest_reuse"));
+        assert!(names.contains(&"register_plan"));
+        assert!(names.contains(&"validate_plan"));
+    }
+
+    #[test]
+    fn test_handle_tools_call_valid() {
+        let conn = setup_test_db();
+        let params = json!({
+            "name": "validate_creation",
+            "arguments": {
+                "symbol_name": "nonexistent_fn",
+                "target_module": "src/lib.rs"
+            }
+        });
+        let response = handle_tools_call(Some(json!(3)), &params, &conn);
+        assert_eq!(response["id"], 3);
+        assert!(response["result"]["content"].is_array());
+        assert_eq!(response["result"]["isError"], false);
+    }
+
+    #[test]
+    fn test_handle_tools_call_unknown_tool() {
+        let conn = setup_test_db();
+        let params = json!({
+            "name": "nonexistent_tool",
+            "arguments": {}
+        });
+        let response = handle_tools_call(Some(json!(4)), &params, &conn);
+        assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn test_handle_tools_call_validate_plan() {
+        let conn = setup_test_db();
+        let params = json!({
+            "name": "validate_plan",
+            "arguments": {
+                "actions": [{
+                    "action": "create",
+                    "symbol": "new_fn",
+                    "target": "src/lib.rs"
+                }]
+            }
+        });
+        let response = handle_tools_call(Some(json!(5)), &params, &conn);
+        assert_eq!(response["result"]["isError"], false);
+    }
+}

@@ -25,7 +25,7 @@ pub fn run(plan_file: &str, db_path: &str) -> Result<(), String> {
         return Err("No actions found in plan. Expected lines like: CREATE: symbol_name in: path/to/file.rs".to_string());
     }
 
-    let report = queries::validate_plan(&conn, &actions);
+    let report = queries::validate_plan(&conn, &actions)?;
 
     let json = serde_json::to_string_pretty(&report)
         .map_err(|e| format!("Failed to serialize: {}", e))?;

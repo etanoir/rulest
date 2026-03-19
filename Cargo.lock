@@ -285,15 +285,16 @@ dependencies = [
 
 [[package]]
 name = "rulest"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "rulest-core",
  "rulest-indexer",
+ "rusqlite",
 ]
 
 [[package]]
 name = "rulest-cli"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "rulest-core",
@@ -306,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "rulest-core"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -315,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "rulest-indexer"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "cargo_metadata",
  "proc-macro2",
@@ -330,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "rulest-mcp"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "rulest-core",
  "rusqlite",

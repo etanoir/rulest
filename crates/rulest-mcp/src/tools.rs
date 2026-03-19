@@ -147,29 +147,39 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         "validate_creation" => {
             let symbol_name = args["symbol_name"].as_str().unwrap_or("");
             let target_module = args["target_module"].as_str().unwrap_or("");
-            let advisories = queries::validate_creation(conn, symbol_name, target_module);
-            json!({ "advisories": advisories })
+            match queries::validate_creation(conn, symbol_name, target_module) {
+                Ok(advisories) => json!({ "advisories": advisories }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         "validate_dependency" => {
             let type_name = args["type_name"].as_str().unwrap_or("");
-            let advisories = queries::validate_dependency(conn, type_name);
-            json!({ "advisories": advisories })
+            match queries::validate_dependency(conn, type_name) {
+                Ok(advisories) => json!({ "advisories": advisories }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         "validate_boundary" => {
             let symbol_name = args["symbol_name"].as_str().unwrap_or("");
             let target_crate = args["target_crate"].as_str().unwrap_or("");
-            let advisories = queries::validate_boundary(conn, symbol_name, target_crate);
-            json!({ "advisories": advisories })
+            match queries::validate_boundary(conn, symbol_name, target_crate) {
+                Ok(advisories) => json!({ "advisories": advisories }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         "check_wip" => {
             let module_path = args["module_path"].as_str().unwrap_or("");
-            let advisories = queries::check_wip(conn, module_path);
-            json!({ "advisories": advisories })
+            match queries::check_wip(conn, module_path) {
+                Ok(advisories) => json!({ "advisories": advisories }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         "suggest_reuse" => {
             let capability = args["capability"].as_str().unwrap_or("");
-            let advisories = queries::suggest_reuse(conn, capability);
-            json!({ "advisories": advisories })
+            match queries::suggest_reuse(conn, capability) {
+                Ok(advisories) => json!({ "advisories": advisories }),
+                Err(e) => json!({ "error": e }),
+            }
         }
         "register_plan" => {
             let agent = args["agent"].as_str().unwrap_or("unknown");
@@ -187,8 +197,10 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
                 .get("actions")
                 .and_then(|a| serde_json::from_value(a.clone()).ok())
                 .unwrap_or_default();
-            let report = queries::validate_plan(conn, &actions);
-            json!(report)
+            match queries::validate_plan(conn, &actions) {
+                Ok(report) => json!(report),
+                Err(e) => json!({ "error": e }),
+            }
         }
         _ => {
             json!({ "error": format!("Unknown tool: {}", tool_name) })

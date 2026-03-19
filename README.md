@@ -123,7 +123,7 @@ Add to your Claude Code MCP configuration:
 }
 ```
 
-The MCP server exposes five tools over JSON-RPC (stdio):
+The MCP server exposes seven tools over JSON-RPC (stdio):
 
 | Tool | Question it answers |
 |------|-------------------|
@@ -132,6 +132,8 @@ The MCP server exposes five tools over JSON-RPC (stdio):
 | `validate_boundary` | Does placing this here violate ownership rules? |
 | `check_wip` | Is someone else working in this area? |
 | `suggest_reuse` | What existing code can I reuse for this? |
+| `register_plan` | Register planned symbols from an AI plan into the registry. Enables conflict detection via `check_wip` for multi-agent coordination. Takes `actions` (array of planned actions) and `agent` (agent identifier). |
+| `validate_plan` | Validate an entire structured plan against the registry. Checks each action for conflicts, duplicates, boundary violations, and WIP conflicts. Returns a report with per-action advisories and a summary. Takes `actions` (array of planned actions). |
 
 ### 6. Scaffold CLAUDE.md and settings for a project
 
@@ -140,6 +142,40 @@ rulest scaffold
 ```
 
 Generates `CLAUDE.md` (root and per-crate), `.claude/settings.json` with deny rules, and `.architect/seed.sql` — all pre-filled with your workspace's actual crate names. Existing files are not overwritten.
+
+### 7. Validate a plan file
+
+```sh
+rulest validate <plan> [--db <path>]
+```
+
+Validate a structured plan file against the registry. The plan file uses a simple text format:
+
+```
+CREATE: fn calculate_settlement_fee
+  in: crates/trading/src/fees.rs
+
+MODIFY: fn execute_settlement
+  in: crates/trading/src/settlement.rs
+```
+
+Each action is checked for duplicates, boundary violations, and WIP conflicts. Returns a JSON report with per-action advisories and a summary.
+
+### 8. Register planned symbols
+
+```sh
+rulest register-plan <plan> [--agent <name>] [--db <path>]
+```
+
+Register planned symbols from a plan file into the registry with status `planned`. This is Trigger 2 (Post-Plan Registration) from the Minesweeper architecture — it enables conflict detection via `check_wip` for multi-agent coordination.
+
+### 9. Build and sync
+
+```sh
+rulest build [--workspace <path>] [-- <cargo-args>...]
+```
+
+Build the workspace and automatically sync the registry. Equivalent to running `cargo build` followed by `rulest sync`. Implements the article's Post-Compile Sync trigger. Additional cargo arguments are passed through (e.g., `rulest build -- --release`).
 
 ## Important Usage Notes
 
@@ -183,17 +219,22 @@ The indexer extracts names, types, visibility, and signatures. It never stores f
 ## CLI Reference
 
 ```
-rulest init       [-w <Cargo.toml>]          Initialize the registry
-rulest add-rule   <crate> <desc> [-k <kind>] Add an ownership rule
-rulest sync       [-w <Cargo.toml>] [--full] Sync source code into registry
-rulest query      [symbol]                   Look up a symbol
-rulest query      --validate-creation <name> --target <module>
-rulest query      --validate-dependency <type>
-rulest query      --validate-boundary <name> --crate-name <crate>
-rulest query      --check-wip <module_path>
-rulest query      --suggest-reuse <description>
-rulest serve      [-d <registry.db>]         Start MCP server (stdio)
-rulest scaffold   [-w <Cargo.toml>]          Generate project templates
+rulest init            [-w <Cargo.toml>]          Initialize the registry
+rulest add-rule        <crate> <desc> [-k <kind>] Add an ownership rule
+rulest sync            [-w <Cargo.toml>] [--full] Sync source code into registry
+rulest query           [symbol]                   Look up a symbol
+rulest query           --validate-creation <name> --target <module>
+rulest query           --validate-dependency <type>
+rulest query           --validate-boundary <name> --crate-name <crate>
+rulest query           --check-wip <module_path>
+rulest query           --suggest-reuse <description>
+rulest validate        <plan> [--db <path>]       Validate a plan file against the registry
+rulest register-plan   <plan> [--agent <name>] [--db <path>]
+                                                  Register planned symbols into the registry
+rulest build           [--workspace <path>] [-- <cargo-args>...]
+                                                  Build workspace and sync registry
+rulest serve           [-d <registry.db>]         Start MCP server (stdio)
+rulest scaffold        [-w <Cargo.toml>]          Generate project templates
 ```
 
 ## License

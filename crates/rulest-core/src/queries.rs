@@ -10,11 +10,11 @@ pub fn validate_creation(
     conn: &Connection,
     symbol_name: &str,
     target_module: &str,
-) -> Vec<Advisory> {
+) -> Result<Vec<Advisory>, String> {
     let mut advisories = Vec::new();
 
     // Exact match
-    let exact_matches = find_symbols_by_name(conn, symbol_name);
+    let exact_matches = find_symbols_by_name(conn, symbol_name)?;
     if exact_matches.len() == 1 {
         let existing = &exact_matches[0];
         advisories.push(Advisory::ReuseExisting {
@@ -24,16 +24,16 @@ pub fn validate_creation(
                 symbol_name, existing.crate_name, existing.module_path
             ),
         });
-        return advisories;
+        return Ok(advisories);
     } else if exact_matches.len() > 1 {
         advisories.push(Advisory::AmbiguousMatch {
             candidates: exact_matches,
         });
-        return advisories;
+        return Ok(advisories);
     }
 
     // Fuzzy match (LIKE with % wildcards)
-    let fuzzy_matches = find_symbols_fuzzy(conn, symbol_name);
+    let fuzzy_matches = find_symbols_fuzzy(conn, symbol_name)?;
     if fuzzy_matches.len() == 1 {
         let existing = &fuzzy_matches[0];
         advisories.push(Advisory::ReuseExisting {
@@ -43,28 +43,28 @@ pub fn validate_creation(
                 existing.name, existing.crate_name, existing.module_path
             ),
         });
-        return advisories;
+        return Ok(advisories);
     } else if fuzzy_matches.len() > 1 {
         advisories.push(Advisory::AmbiguousMatch {
             candidates: fuzzy_matches,
         });
-        return advisories;
+        return Ok(advisories);
     }
 
     advisories.push(Advisory::SafeToCreate {
         symbol: symbol_name.to_string(),
         target: target_module.to_string(),
     });
-    advisories
+    Ok(advisories)
 }
 
 /// Validate whether a type/dependency exists in the registry.
 ///
 /// Looks up struct/trait/enum across all crates.
-pub fn validate_dependency(conn: &Connection, type_name: &str) -> Vec<Advisory> {
+pub fn validate_dependency(conn: &Connection, type_name: &str) -> Result<Vec<Advisory>, String> {
     let mut advisories = Vec::new();
 
-    let matches = find_type_symbols(conn, type_name);
+    let matches = find_type_symbols(conn, type_name)?;
     if matches.is_empty() {
         advisories.push(Advisory::SafeToCreate {
             symbol: type_name.to_string(),
@@ -74,7 +74,7 @@ pub fn validate_dependency(conn: &Connection, type_name: &str) -> Vec<Advisory> 
         let existing = &matches[0];
 
         // Find traits this type implements via relationships
-        let traits = find_implemented_traits(conn, &existing.name, &existing.module_path);
+        let traits = find_implemented_traits(conn, &existing.name, &existing.module_path)?;
 
         // Try to find a pub use re-export path for a nicer prelude path
         let prelude_path = find_reexport_path(conn, &existing.name, &existing.crate_name)
@@ -91,7 +91,7 @@ pub fn validate_dependency(conn: &Connection, type_name: &str) -> Vec<Advisory> 
         });
     }
 
-    advisories
+    Ok(advisories)
 }
 
 /// Validate whether placing a symbol in a target crate violates ownership rules.
@@ -99,20 +99,20 @@ pub fn validate_boundary(
     conn: &Connection,
     symbol_name: &str,
     target_crate: &str,
-) -> Vec<Advisory> {
+) -> Result<Vec<Advisory>, String> {
     let mut advisories = Vec::new();
 
     let mut stmt = conn
         .prepare(
             "SELECT id, crate_name, description, kind FROM ownership_rules WHERE crate_name = ?1",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
     let rules: Vec<(i64, String, String, String)> = stmt
         .query_map(params![target_crate], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
-        .unwrap()
+        .map_err(|e| format!("DB error: {}", e))?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -155,11 +155,11 @@ pub fn validate_boundary(
         });
     }
 
-    advisories
+    Ok(advisories)
 }
 
 /// Check for WIP or planned symbols in a given module path.
-pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
+pub fn check_wip(conn: &Connection, module_path: &str) -> Result<Vec<Advisory>, String> {
     let mut advisories = Vec::new();
 
     let mut stmt = conn
@@ -168,13 +168,13 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
              JOIN modules m ON s.module_id = m.id
              WHERE m.path LIKE ?1 AND s.status IN ('planned', 'wip')",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
     let rows: Vec<(String, Option<String>, Option<String>)> = stmt
         .query_map(params![format!("%{}%", module_path)], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .unwrap()
+        .map_err(|e| format!("DB error: {}", e))?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -201,13 +201,13 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Vec<Advisory> {
         });
     }
 
-    advisories
+    Ok(advisories)
 }
 
 /// Search for reusable symbols matching a capability description.
 ///
 /// Performs keyword-based search across public symbols and contracts.
-pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Advisory> {
+pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Result<Vec<Advisory>, String> {
     let mut advisories = Vec::new();
 
     // Split description into keywords and search
@@ -219,7 +219,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
     let mut all_matches: Vec<ExistingSymbol> = Vec::new();
 
     for keyword in &keywords {
-        let matches = find_symbols_fuzzy(conn, keyword);
+        let matches = find_symbols_fuzzy(conn, keyword)?;
         for m in matches {
             if !all_matches.iter().any(|e| e.name == m.name && e.module_path == m.module_path) {
                 all_matches.push(m);
@@ -238,7 +238,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                  JOIN crates c2 ON m.crate_id = c2.id
                  WHERE ct.description LIKE ?1 AND s.visibility = 'public'",
             )
-            .unwrap();
+            .map_err(|e| format!("DB error: {}", e))?;
 
         let matches: Vec<ExistingSymbol> = stmt
             .query_map(params![format!("%{}%", keyword)], |row| {
@@ -256,7 +256,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
                     location: None,
                 })
             })
-            .unwrap()
+            .map_err(|e| format!("DB error: {}", e))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -302,7 +302,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Vec<Adv
         });
     }
 
-    advisories
+    Ok(advisories)
 }
 
 /// Register planned actions into the registry as planned/wip symbols.
@@ -525,7 +525,7 @@ fn iso8601_to_epoch(s: &str) -> Option<u64> {
 pub fn validate_plan(
     conn: &Connection,
     actions: &[crate::advisory::PlannedAction],
-) -> crate::advisory::PlanReport {
+) -> Result<crate::advisory::PlanReport, String> {
     use crate::advisory::*;
 
     let mut results = Vec::new();
@@ -542,11 +542,11 @@ pub fn validate_plan(
         let mut advisories = Vec::new();
 
         // Check if symbol already exists
-        let creation = validate_creation(conn, &action.symbol, &action.target);
+        let creation = validate_creation(conn, &action.symbol, &action.target)?;
         advisories.extend(creation);
 
         // Check if it's a type that already exists
-        let dep = validate_dependency(conn, &action.symbol);
+        let dep = validate_dependency(conn, &action.symbol)?;
         // Only add USE_EXISTING_TYPE advisories (skip SafeToCreate duplicates)
         for a in &dep {
             if matches!(a, Advisory::UseExistingType { .. }) {
@@ -556,7 +556,7 @@ pub fn validate_plan(
 
         // Check boundary rules if crate name is provided
         if let Some(ref crate_name) = action.crate_name {
-            let boundary = validate_boundary(conn, &action.symbol, crate_name);
+            let boundary = validate_boundary(conn, &action.symbol, crate_name)?;
             for a in &boundary {
                 if matches!(a, Advisory::BoundaryViolation { .. }) {
                     advisories.push(a.clone());
@@ -565,7 +565,7 @@ pub fn validate_plan(
         }
 
         // Check for WIP conflicts in the target module
-        let wip = check_wip(conn, &action.target);
+        let wip = check_wip(conn, &action.target)?;
         advisories.extend(wip);
 
         // Tally summary
@@ -587,7 +587,7 @@ pub fn validate_plan(
         });
     }
 
-    PlanReport { results, summary }
+    Ok(PlanReport { results, summary })
 }
 
 /// Aggregate stats from the registry.
@@ -638,16 +638,20 @@ pub fn get_registry_stats(conn: &Connection) -> RegistryStats {
 }
 
 fn group_count(conn: &Connection, sql: &str) -> Vec<(String, usize)> {
-    let mut stmt = conn.prepare(sql).unwrap();
-    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let result = match stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    };
+    result
 }
 
 // ---- Internal helpers ----
 
-fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
+fn find_symbols_by_name(conn: &Connection, name: &str) -> Result<Vec<ExistingSymbol>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
@@ -658,32 +662,32 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Vec<ExistingSymbol> {
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name = ?1",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map(params![name], |row| {
-        let module_path: String = row.get(2)?;
-        let line_number: Option<u32> = row.get(8)?;
-        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
-        Ok(ExistingSymbol {
-            name: row.get(0)?,
-            kind: row.get(1)?,
-            module_path,
-            crate_name: row.get(3)?,
-            signature: row.get(4)?,
-            visibility: row.get(5)?,
-            created_by: row.get(6)?,
-            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number,
-            scope: row.get(9)?,
-            location,
+    let rows = stmt
+        .query_map(params![name], |row| {
+            let module_path: String = row.get(2)?;
+            let line_number: Option<u32> = row.get(8)?;
+            let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
+            Ok(ExistingSymbol {
+                name: row.get(0)?,
+                kind: row.get(1)?,
+                module_path,
+                crate_name: row.get(3)?,
+                signature: row.get(4)?,
+                visibility: row.get(5)?,
+                created_by: row.get(6)?,
+                call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+                line_number,
+                scope: row.get(9)?,
+                location,
+            })
         })
-    })
-    .unwrap()
-    .filter_map(|r| r.ok())
-    .collect()
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
+fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Result<Vec<ExistingSymbol>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
@@ -694,33 +698,37 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Vec<ExistingSymbol> {
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name LIKE ?1",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map(params![format!("%{}%", pattern)], |row| {
-        let module_path: String = row.get(2)?;
-        let line_number: Option<u32> = row.get(8)?;
-        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
-        Ok(ExistingSymbol {
-            name: row.get(0)?,
-            kind: row.get(1)?,
-            module_path,
-            crate_name: row.get(3)?,
-            signature: row.get(4)?,
-            visibility: row.get(5)?,
-            created_by: row.get(6)?,
-            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number,
-            scope: row.get(9)?,
-            location,
+    let rows = stmt
+        .query_map(params![format!("%{}%", pattern)], |row| {
+            let module_path: String = row.get(2)?;
+            let line_number: Option<u32> = row.get(8)?;
+            let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
+            Ok(ExistingSymbol {
+                name: row.get(0)?,
+                kind: row.get(1)?,
+                module_path,
+                crate_name: row.get(3)?,
+                signature: row.get(4)?,
+                visibility: row.get(5)?,
+                created_by: row.get(6)?,
+                call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+                line_number,
+                scope: row.get(9)?,
+                location,
+            })
         })
-    })
-    .unwrap()
-    .filter_map(|r| r.ok())
-    .collect()
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 /// Find traits implemented by a given symbol (via `Implements` relationships).
-fn find_implemented_traits(conn: &Connection, symbol_name: &str, module_path: &str) -> Vec<String> {
+fn find_implemented_traits(
+    conn: &Connection,
+    symbol_name: &str,
+    module_path: &str,
+) -> Result<Vec<String>, String> {
     // Find the symbol's id first
     let symbol_id: Option<i64> = conn
         .query_row(
@@ -733,7 +741,7 @@ fn find_implemented_traits(conn: &Connection, symbol_name: &str, module_path: &s
         .ok();
 
     let Some(sid) = symbol_id else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     // Look up Implements relationships where this symbol is the from_symbol
@@ -743,12 +751,12 @@ fn find_implemented_traits(conn: &Connection, symbol_name: &str, module_path: &s
              JOIN symbols s2 ON r.to_symbol_id = s2.id
              WHERE r.from_symbol_id = ?1 AND r.kind = 'implements'",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map(params![sid], |row| row.get::<_, String>(0))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+    let rows = stmt
+        .query_map(params![sid], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 /// Try to find a `pub use` re-export path for a symbol (e.g., prelude path).
@@ -780,7 +788,7 @@ fn find_reexport_path(conn: &Connection, symbol_name: &str, crate_name: &str) ->
 }
 
 /// Get all crate-level dependencies as (from_crate_name, to_crate_name) pairs.
-pub fn get_crate_dependencies(conn: &Connection) -> Vec<(String, String)> {
+pub fn get_crate_dependencies(conn: &Connection) -> Result<Vec<(String, String)>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT c1.name, c2.name
@@ -788,15 +796,15 @@ pub fn get_crate_dependencies(conn: &Connection) -> Vec<(String, String)> {
              JOIN crates c1 ON cd.from_crate_id = c1.id
              JOIN crates c2 ON cd.to_crate_id = c2.id",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> {
+fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingSymbol>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT s.name, s.kind, m.path, c.name, s.signature, s.visibility, s.created_by,
@@ -807,29 +815,29 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Vec<ExistingSymbol> 
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias', 're_export')",
         )
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map(params![type_name], |row| {
-        let module_path: String = row.get(2)?;
-        let line_number: Option<u32> = row.get(8)?;
-        let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
-        Ok(ExistingSymbol {
-            name: row.get(0)?,
-            kind: row.get(1)?,
-            module_path,
-            crate_name: row.get(3)?,
-            signature: row.get(4)?,
-            visibility: row.get(5)?,
-            created_by: row.get(6)?,
-            call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
-            line_number,
-            scope: row.get(9)?,
-            location,
+    let rows = stmt
+        .query_map(params![type_name], |row| {
+            let module_path: String = row.get(2)?;
+            let line_number: Option<u32> = row.get(8)?;
+            let location = line_number.map(|ln| format!("{}:{}", module_path, ln));
+            Ok(ExistingSymbol {
+                name: row.get(0)?,
+                kind: row.get(1)?,
+                module_path,
+                crate_name: row.get(3)?,
+                signature: row.get(4)?,
+                visibility: row.get(5)?,
+                created_by: row.get(6)?,
+                call_sites: row.get::<_, i64>(7).ok().map(|n| n as usize),
+                line_number,
+                scope: row.get(9)?,
+                location,
+            })
         })
-    })
-    .unwrap()
-    .filter_map(|r| r.ok())
-    .collect()
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 #[cfg(test)]
@@ -897,7 +905,8 @@ mod tests {
     #[test]
     fn test_validate_creation_finds_exact_match() {
         let conn = setup_test_db();
-        let advisories = validate_creation(&conn, "calculate_fee", "crates/other/src/lib.rs");
+        let advisories =
+            validate_creation(&conn, "calculate_fee", "crates/other/src/lib.rs").unwrap();
         assert_eq!(advisories.len(), 1);
         match &advisories[0] {
             Advisory::ReuseExisting { existing, .. } => {
@@ -910,7 +919,8 @@ mod tests {
     #[test]
     fn test_validate_creation_safe() {
         let conn = setup_test_db();
-        let advisories = validate_creation(&conn, "totally_new_function", "crates/other/src/lib.rs");
+        let advisories =
+            validate_creation(&conn, "totally_new_function", "crates/other/src/lib.rs").unwrap();
         assert_eq!(advisories.len(), 1);
         matches!(&advisories[0], Advisory::SafeToCreate { .. });
     }
@@ -918,7 +928,7 @@ mod tests {
     #[test]
     fn test_validate_dependency() {
         let conn = setup_test_db();
-        let advisories = validate_dependency(&conn, "FeeSchedule");
+        let advisories = validate_dependency(&conn, "FeeSchedule").unwrap();
         assert_eq!(advisories.len(), 1);
         match &advisories[0] {
             Advisory::UseExistingType { existing, .. } => {
@@ -942,7 +952,7 @@ mod tests {
         )
         .unwrap();
 
-        let advisories = validate_boundary(&conn, "HttpClient", "domain");
+        let advisories = validate_boundary(&conn, "HttpClient", "domain").unwrap();
         assert_eq!(advisories.len(), 1);
         matches!(&advisories[0], Advisory::BoundaryViolation { .. });
     }
@@ -979,7 +989,7 @@ mod tests {
         )
         .unwrap();
 
-        let advisories = check_wip(&conn, "fees");
+        let advisories = check_wip(&conn, "fees").unwrap();
         assert_eq!(advisories.len(), 1);
         match &advisories[0] {
             Advisory::WipConflict { symbols, .. } => {
@@ -993,9 +1003,12 @@ mod tests {
     fn test_suggest_reuse() {
         let conn = setup_test_db();
         // "calculate_fee" exists in the test DB, search for "calculate fee"
-        let advisories = suggest_reuse(&conn, "calculate fee");
+        let advisories = suggest_reuse(&conn, "calculate fee").unwrap();
 
-        assert!(!advisories.is_empty(), "suggest_reuse should return advisories for a matching keyword");
+        assert!(
+            !advisories.is_empty(),
+            "suggest_reuse should return advisories for a matching keyword"
+        );
         // The keyword "calculate" should fuzzy-match "calculate_fee"
         match &advisories[0] {
             Advisory::ReuseExisting { existing, .. } => {
@@ -1035,14 +1048,20 @@ mod tests {
             },
         ];
 
-        let report = validate_plan(&conn, &actions);
+        let report = validate_plan(&conn, &actions).unwrap();
         assert_eq!(report.results.len(), 2, "Plan report should have 2 results");
-        assert_eq!(report.summary.total_actions, 2, "Summary total_actions should be 2");
+        assert_eq!(
+            report.summary.total_actions, 2,
+            "Summary total_actions should be 2"
+        );
 
         // First action is brand new, should have SafeToCreate
         let first = &report.results[0];
         assert!(
-            first.advisories.iter().any(|a| matches!(a, Advisory::SafeToCreate { .. })),
+            first
+                .advisories
+                .iter()
+                .any(|a| matches!(a, Advisory::SafeToCreate { .. })),
             "brand_new_fn should be SafeToCreate, got: {:?}",
             first.advisories
         );
@@ -1050,13 +1069,19 @@ mod tests {
         // Second action collides with existing "calculate_fee"
         let second = &report.results[1];
         assert!(
-            second.advisories.iter().any(|a| matches!(a, Advisory::ReuseExisting { .. })),
+            second
+                .advisories
+                .iter()
+                .any(|a| matches!(a, Advisory::ReuseExisting { .. })),
             "calculate_fee should trigger ReuseExisting, got: {:?}",
             second.advisories
         );
 
         // Summary should reflect the reuse
-        assert!(report.summary.reuse >= 1, "Summary should count at least 1 reuse");
+        assert!(
+            report.summary.reuse >= 1,
+            "Summary should count at least 1 reuse"
+        );
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub fn run(args: QueryArgs) -> Result<(), String> {
 
     // Simple symbol lookup
     if let Some(ref name) = args.symbol {
-        let advisories = queries::validate_creation(&conn, name, "");
+        let advisories = queries::validate_creation(&conn, name, "")?;
         print_json(&advisories)?;
         return Ok(());
     }
@@ -36,14 +36,14 @@ pub fn run(args: QueryArgs) -> Result<(), String> {
     // Validate creation
     if let Some(ref name) = args.validate_creation {
         let target_module = args.target.as_deref().unwrap_or("");
-        let advisories = queries::validate_creation(&conn, name, target_module);
+        let advisories = queries::validate_creation(&conn, name, target_module)?;
         print_json(&advisories)?;
         return Ok(());
     }
 
     // Validate dependency
     if let Some(ref name) = args.validate_dependency {
-        let advisories = queries::validate_dependency(&conn, name);
+        let advisories = queries::validate_dependency(&conn, name)?;
         print_json(&advisories)?;
         return Ok(());
     }
@@ -51,21 +51,21 @@ pub fn run(args: QueryArgs) -> Result<(), String> {
     // Validate boundary
     if let Some(ref name) = args.validate_boundary {
         let target_crate = args.crate_name.as_deref().unwrap_or("");
-        let advisories = queries::validate_boundary(&conn, name, target_crate);
+        let advisories = queries::validate_boundary(&conn, name, target_crate)?;
         print_json(&advisories)?;
         return Ok(());
     }
 
     // Check WIP
     if let Some(ref path) = args.check_wip {
-        let advisories = queries::check_wip(&conn, path);
+        let advisories = queries::check_wip(&conn, path)?;
         print_json(&advisories)?;
         return Ok(());
     }
 
     // Suggest reuse
     if let Some(ref desc) = args.suggest_reuse {
-        let advisories = queries::suggest_reuse(&conn, desc);
+        let advisories = queries::suggest_reuse(&conn, desc)?;
         print_json(&advisories)?;
         return Ok(());
     }
