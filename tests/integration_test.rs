@@ -339,7 +339,7 @@ fn test_add_rule_and_validate_boundary() {
     let rule = OwnershipRule {
         id: None,
         crate_name: "domain".to_string(),
-        description: "No infrastructure concerns".to_string(),
+        description: "No HTTP clients, network, or infrastructure concerns".to_string(),
         kind: OwnershipRuleKind::MustNot,
     };
     registry::insert_ownership_rule(&conn, &rule).unwrap();

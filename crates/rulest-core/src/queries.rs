@@ -127,11 +127,19 @@ pub fn validate_boundary(
 
     for (_id, crate_name, description, kind) in &rules {
         if kind == "must_not" {
+            // Extract keywords from the rule description and check if the symbol
+            // name relates to any of the forbidden concerns. This prevents false
+            // positives where unrelated symbols trigger boundary violations.
+            if !symbol_matches_rule(symbol_name, description) {
+                continue;
+            }
+
             // Find the best alternative crate to suggest
-            let (suggested_crate, suggested_path) = alternative_crates
-                .first()
-                .map(|(n, p)| (n.clone(), p.clone()))
-                .unwrap_or_else(|| ("other".to_string(), "crates/other/src/lib.rs".to_string()));
+            let (suggested_crate, suggested_path) = find_best_alternative(
+                &alternative_crates,
+                symbol_name,
+                conn,
+            );
 
             advisories.push(Advisory::BoundaryViolation {
                 rule: description.clone(),
@@ -840,6 +848,123 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingS
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
+/// Check if a symbol name is related to the concerns described in a must_not rule.
+///
+/// Extracts semantic keywords from the rule description and checks whether the
+/// symbol name (case-insensitively) contains any of them. This prevents false
+/// positives where unrelated symbols trigger boundary violations.
+///
+/// For example, rule "No HTTP routing or database schema" would extract keywords
+/// like ["http", "routing", "database", "schema"], and only symbols containing
+/// those substrings (e.g. "HttpClient", "DatabaseSchema", "Router") would match.
+fn symbol_matches_rule(symbol_name: &str, rule_description: &str) -> bool {
+    // Common stop words to ignore when extracting keywords
+    let stop_words: &[&str] = &[
+        "no", "or", "and", "the", "a", "an", "in", "of", "to", "for",
+        "not", "with", "from", "by", "on", "at", "is", "be", "as",
+        "do", "does", "should", "must", "direct", "operations", "concerns",
+        "logic", "definitions", "handling",
+    ];
+
+    let symbol_lower = symbol_name.to_lowercase();
+
+    // Also split the symbol name by CamelCase boundaries for matching
+    let symbol_parts = split_camel_case(&symbol_lower);
+
+    // Extract keywords from the rule description
+    let rule_words: Vec<String> = rule_description
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .filter(|w| !stop_words.contains(w))
+        .map(|w| w.to_string())
+        .collect();
+
+    // Check if any keyword from the rule matches the symbol name
+    for keyword in &rule_words {
+        // Direct substring match against full symbol name
+        if symbol_lower.contains(keyword.as_str()) {
+            return true;
+        }
+        // Match against individual CamelCase parts
+        for part in &symbol_parts {
+            if part == keyword {
+                return true;
+            }
+            // Stem-aware matching: check if the keyword and part share a common
+            // root of at least 4 chars (e.g. "routing" / "router" share "rout")
+            let min_stem = 4.min(keyword.len()).min(part.len());
+            if min_stem >= 4 && keyword[..min_stem] == part[..min_stem] {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Split a CamelCase identifier into lowercase parts.
+/// e.g. "HttpClient" -> ["http", "client"]
+/// e.g. "postservice" -> ["postservice"] (already lowercase)
+fn split_camel_case(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = s.chars().collect();
+
+    for &c in chars.iter() {
+        if c.is_uppercase() && !current.is_empty() {
+            parts.push(current.to_lowercase());
+            current = String::new();
+        }
+        current.push(c);
+    }
+    if !current.is_empty() {
+        parts.push(current.to_lowercase());
+    }
+
+    // If no split happened, return the original
+    if parts.is_empty() {
+        parts.push(s.to_lowercase());
+    }
+
+    parts
+}
+
+/// Find the best alternative crate to suggest for a symbol that violates a boundary.
+///
+/// Tries to find a crate whose `must_own` rule description semantically matches
+/// the symbol. Falls back to the first alternative crate.
+fn find_best_alternative(
+    alternatives: &[(String, String)],
+    symbol_name: &str,
+    conn: &Connection,
+) -> (String, String) {
+    // Try to find a crate with a must_own rule that matches the symbol
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT crate_name, description FROM ownership_rules WHERE kind = 'must_own'"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                let (crate_name, description) = row;
+                if symbol_matches_rule(symbol_name, &description) {
+                    // Find this crate in alternatives
+                    if let Some((name, path)) = alternatives.iter().find(|(n, _)| n == &crate_name) {
+                        return (name.clone(), path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback to first alternative
+    alternatives
+        .first()
+        .map(|(n, p)| (n.clone(), p.clone()))
+        .unwrap_or_else(|| ("other".to_string(), "crates/other/src/lib.rs".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1112,6 +1237,58 @@ mod tests {
             created_by.as_deref(),
             Some("test-agent"),
             "created_by should be 'test-agent'"
+        );
+    }
+
+    #[test]
+    fn test_symbol_matches_rule() {
+        // Should match: symbol name contains keyword from rule
+        assert!(symbol_matches_rule("HttpClient", "No HTTP routing or network operations"));
+        assert!(symbol_matches_rule("DatabaseSchema", "No database or filesystem operations"));
+        assert!(symbol_matches_rule("Router", "No HTTP routing or network operations"));
+        assert!(symbol_matches_rule("TemplateRenderer", "No template rendering"));
+        assert!(symbol_matches_rule("FileWriter", "No I/O or filesystem operations"));
+
+        // Should NOT match: symbol name unrelated to rule
+        assert!(!symbol_matches_rule("PostService", "No HTTP routing, no direct database schema, no template rendering"));
+        assert!(!symbol_matches_rule("UserRole", "No I/O or filesystem operations"));
+        assert!(!symbol_matches_rule("CommentService", "No HTTP routing or network operations"));
+        assert!(!symbol_matches_rule("HookRegistry", "No database or filesystem operations"));
+    }
+
+    #[test]
+    fn test_split_camel_case() {
+        assert_eq!(split_camel_case("HttpClient"), vec!["http", "client"]);
+        assert_eq!(split_camel_case("postservice"), vec!["postservice"]);
+        assert_eq!(split_camel_case("DatabaseSchema"), vec!["database", "schema"]);
+        assert_eq!(split_camel_case("URLParser"), vec!["u", "r", "l", "parser"]);
+    }
+
+    #[test]
+    fn test_validate_boundary_does_not_false_positive() {
+        let conn = setup_test_db();
+
+        // Add a must_not rule
+        conn.execute(
+            "INSERT INTO ownership_rules (crate_name, description, kind) VALUES (?1, ?2, ?3)",
+            params!["domain", "No HTTP routing or network operations", "must_not"],
+        )
+        .unwrap();
+
+        // PostService should NOT trigger a violation (unrelated to HTTP/network)
+        let advisories = validate_boundary(&conn, "PostService", "domain").unwrap();
+        assert!(
+            advisories.iter().all(|a| matches!(a, Advisory::SafeToCreate { .. })),
+            "PostService should be safe to create in domain, got: {:?}",
+            advisories
+        );
+
+        // HttpClient SHOULD trigger a violation (matches "http" keyword)
+        let advisories = validate_boundary(&conn, "HttpClient", "domain").unwrap();
+        assert!(
+            advisories.iter().any(|a| matches!(a, Advisory::BoundaryViolation { .. })),
+            "HttpClient should trigger boundary violation in domain, got: {:?}",
+            advisories
         );
     }
 }
