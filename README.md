@@ -6,6 +6,87 @@ A CLI tool and MCP server that any Rust workspace can adopt to prevent AI agents
 
 For the principles and theory behind this tool, read [The Minesweeper Problem](the-minesweeper-problem.md).
 
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer / AI Agent
+    participant CLI as rulest CLI
+    participant Reg as Registry (SQLite)
+    participant Src as Source Code (.rs files)
+
+    Note over Dev, Src: Phase 1 — Setup (once per project)
+
+    Dev->>CLI: rulest init
+    CLI->>Reg: Create .architect/registry.db<br/>+ seed.sql
+    Dev->>CLI: rulest add-rule domain<br/>"No HTTP or DB concerns" --kind must_not
+    CLI->>Reg: INSERT INTO ownership_rules
+    Dev->>CLI: rulest sync
+    CLI->>Src: Parse all .rs files (syn)
+    Src-->>CLI: Symbols (structs, fns, traits, enums)
+    CLI->>Reg: INSERT INTO symbols (signatures only)
+
+    Note over Dev, Src: Phase 2 — Pre-flight checks (before every code change)
+
+    Dev->>CLI: validate_creation "OrderService"<br/>--target trading/src/orders.rs
+    CLI->>Reg: SELECT FROM symbols<br/>WHERE name = 'OrderService'
+    Reg-->>CLI: No match
+    CLI-->>Dev: ✅ SafeToCreate
+
+    Dev->>CLI: validate_creation "Price"<br/>--target trading/src/types.rs
+    CLI->>Reg: SELECT FROM symbols<br/>WHERE name = 'Price'
+    Reg-->>CLI: Exists in domain::models
+    CLI-->>Dev: ⚠️ ReuseExisting<br/>"Price already exists in domain crate"
+
+    Dev->>CLI: validate_boundary "HttpClient"<br/>--crate-name domain
+    CLI->>Reg: SELECT FROM ownership_rules<br/>WHERE crate = 'domain'
+    Reg-->>CLI: must_not: "No HTTP or DB concerns"
+    CLI->>CLI: symbol_matches_rule("HttpClient",<br/>"No HTTP or DB concerns") → true
+    CLI-->>Dev: 🚫 BoundaryViolation<br/>"Move to infrastructure crate"
+
+    Note over Dev, Src: Phase 3 — Write code, then sync
+
+    Dev->>Src: Create OrderService in trading/src/orders.rs
+    Dev->>CLI: rulest sync
+    CLI->>Src: Parse changed files (mtime check)
+    Src-->>CLI: New symbol: OrderService
+    CLI->>Reg: INSERT OrderService
+    CLI-->>Dev: Sync complete: 1 symbol added
+```
+
+### MCP Server Mode (Claude Code Integration)
+
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code
+    participant MCP as rulest serve (stdio)
+    participant Reg as Registry (SQLite)
+
+    Note over CC, Reg: Claude Code spawns rulest as MCP subprocess
+
+    CC->>MCP: JSON-RPC: tools/list
+    MCP-->>CC: 7 tools (validate_creation,<br/>validate_boundary, suggest_reuse, ...)
+
+    Note over CC, Reg: Before writing any new symbol
+
+    CC->>MCP: validate_creation<br/>{symbol: "FeeCalculator",<br/>target: "trading/src/fees.rs"}
+    MCP->>Reg: Check duplicates + boundaries
+    Reg-->>MCP: No conflicts
+    MCP-->>CC: {"type": "safe_to_create"}
+
+    CC->>CC: Writes FeeCalculator code
+
+    Note over CC, Reg: Multi-agent coordination
+
+    CC->>MCP: register_plan<br/>{actions: [{CREATE: "SettlementEngine",<br/>in: "trading/src/settle.rs"}],<br/>agent: "agent-1"}
+    MCP->>Reg: INSERT planned symbol<br/>(status: planned, agent: agent-1)
+
+    CC->>MCP: check_wip<br/>{module: "trading/src/settle.rs"}
+    MCP->>Reg: SELECT planned/wip symbols
+    Reg-->>MCP: SettlementEngine (agent-1, planned)
+    MCP-->>CC: {"type": "wip_conflict",<br/>"agent": "agent-1"}
+```
+
 ## Installation
 
 ```sh
