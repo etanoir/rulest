@@ -40,7 +40,7 @@ pub fn run(crate_name: &str, description: &str, kind: &str, workspace_path: &str
     // Append to seed.sql
     let sql = format!(
         "INSERT INTO ownership_rules (crate_name, description, kind) VALUES ('{}', '{}', '{}');\n",
-        crate_name,
+        crate_name.replace('\'', "''"),
         description.replace('\'', "''"),
         rule_kind.as_str()
     );

@@ -121,7 +121,7 @@ pub fn run(workspace_path: &str) -> Result<(), String> {
             .map(|c| {
                 format!(
                     "INSERT INTO ownership_rules (crate_name, description, kind) VALUES ('{}', '{} owns its domain logic', 'must_own');",
-                    c.name, c.name
+                    c.name.replace('\'', "''"), c.name.replace('\'', "''")
                 )
             })
             .collect();
