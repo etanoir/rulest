@@ -7,10 +7,24 @@ use rulest_indexer::sync::sync_workspace;
 pub fn run(workspace_path: &str, cargo_args: &[String]) -> Result<(), String> {
     let workspace = Path::new(workspace_path);
     let workspace_dir = if workspace.is_file() {
+        // Validate file is actually Cargo.toml
+        if workspace.file_name().and_then(|n| n.to_str()) != Some("Cargo.toml") {
+            return Err(format!(
+                "Expected Cargo.toml, got '{}'",
+                workspace.file_name().unwrap_or_default().to_string_lossy()
+            ));
+        }
         workspace
             .parent()
             .ok_or("Cannot determine workspace directory")?
     } else {
+        // Validate directory contains Cargo.toml
+        if !workspace.join("Cargo.toml").exists() {
+            return Err(format!(
+                "No Cargo.toml found in '{}'",
+                workspace.display()
+            ));
+        }
         workspace
     };
 

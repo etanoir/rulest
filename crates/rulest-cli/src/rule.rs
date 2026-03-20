@@ -4,10 +4,19 @@ use std::path::Path;
 use rulest_core::models::{OwnershipRule, OwnershipRuleKind};
 use rulest_core::registry;
 
-pub fn run(crate_name: &str, description: &str, kind: &str) -> Result<(), String> {
+pub fn run(crate_name: &str, description: &str, kind: &str, workspace_path: &str) -> Result<(), String> {
     let rule_kind: OwnershipRuleKind = kind.parse()?;
 
-    let architect_dir = Path::new(".architect");
+    let workspace = Path::new(workspace_path);
+    let workspace_dir = if workspace.is_file() {
+        workspace
+            .parent()
+            .ok_or("Cannot determine workspace directory")?
+    } else {
+        workspace
+    };
+
+    let architect_dir = workspace_dir.join(".architect");
     let db_path = architect_dir.join("registry.db");
     let seed_path = architect_dir.join("seed.sql");
 
@@ -36,15 +45,14 @@ pub fn run(crate_name: &str, description: &str, kind: &str) -> Result<(), String
         rule_kind.as_str()
     );
 
-    let mut seed_content = if seed_path.exists() {
-        fs::read_to_string(&seed_path)
-            .map_err(|e| format!("Failed to read seed.sql: {}", e))?
-    } else {
-        String::new()
-    };
-    seed_content.push_str(&sql);
-    fs::write(&seed_path, seed_content)
-        .map_err(|e| format!("Failed to update seed.sql: {}", e))?;
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&seed_path)
+        .map_err(|e| format!("Failed to open seed.sql: {}", e))?;
+    file.write_all(sql.as_bytes())
+        .map_err(|e| format!("Failed to append to seed.sql: {}", e))?;
 
     println!("Added rule: {} {} '{}'", rule_kind.as_str(), crate_name, description);
 

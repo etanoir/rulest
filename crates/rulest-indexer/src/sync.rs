@@ -303,7 +303,7 @@ pub fn sync_workspace(
                         .map_err(|e| format!("Failed to re-insert planned/wip symbol: {}", e))?;
                     // These symbols were removed then re-added, net zero change;
                     // adjust stats to not count them as removed.
-                    stats.symbols_removed -= 1;
+                    stats.symbols_removed = stats.symbols_removed.saturating_sub(1);
                 }
             }
 

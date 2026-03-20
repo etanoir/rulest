@@ -13,6 +13,13 @@ fn validate_input(value: &str, field_name: &str) -> Result<(), Value> {
     }
 }
 
+fn require_str<'a>(args: &'a Value, field: &str) -> Result<&'a str, Value> {
+    match args.get(field).and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => Ok(s),
+        _ => Err(json!({ "error": format!("Missing or empty required field '{}'", field) })),
+    }
+}
+
 /// Tool definitions for MCP `tools/list`.
 pub fn tool_definitions() -> Vec<Value> {
     vec![
@@ -155,8 +162,8 @@ pub fn tool_definitions() -> Vec<Value> {
 pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
     match tool_name {
         "validate_creation" => {
-            let symbol_name = args["symbol_name"].as_str().unwrap_or("");
-            let target_module = args["target_module"].as_str().unwrap_or("");
+            let symbol_name = match require_str(args, "symbol_name") { Ok(s) => s, Err(e) => return e };
+            let target_module = match require_str(args, "target_module") { Ok(s) => s, Err(e) => return e };
             if let Err(e) = validate_input(symbol_name, "symbol_name") { return e; }
             if let Err(e) = validate_input(target_module, "target_module") { return e; }
             match queries::validate_creation(conn, symbol_name, target_module) {
@@ -165,7 +172,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             }
         }
         "validate_dependency" => {
-            let type_name = args["type_name"].as_str().unwrap_or("");
+            let type_name = match require_str(args, "type_name") { Ok(s) => s, Err(e) => return e };
             if let Err(e) = validate_input(type_name, "type_name") { return e; }
             match queries::validate_dependency(conn, type_name) {
                 Ok(advisories) => json!({ "advisories": advisories }),
@@ -173,8 +180,8 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             }
         }
         "validate_boundary" => {
-            let symbol_name = args["symbol_name"].as_str().unwrap_or("");
-            let target_crate = args["target_crate"].as_str().unwrap_or("");
+            let symbol_name = match require_str(args, "symbol_name") { Ok(s) => s, Err(e) => return e };
+            let target_crate = match require_str(args, "target_crate") { Ok(s) => s, Err(e) => return e };
             if let Err(e) = validate_input(symbol_name, "symbol_name") { return e; }
             if let Err(e) = validate_input(target_crate, "target_crate") { return e; }
             match queries::validate_boundary(conn, symbol_name, target_crate) {
@@ -183,7 +190,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             }
         }
         "check_wip" => {
-            let module_path = args["module_path"].as_str().unwrap_or("");
+            let module_path = match require_str(args, "module_path") { Ok(s) => s, Err(e) => return e };
             if let Err(e) = validate_input(module_path, "module_path") { return e; }
             match queries::check_wip(conn, module_path) {
                 Ok(advisories) => json!({ "advisories": advisories }),
@@ -191,7 +198,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             }
         }
         "suggest_reuse" => {
-            let capability = args["capability"].as_str().unwrap_or("");
+            let capability = match require_str(args, "capability") { Ok(s) => s, Err(e) => return e };
             if let Err(e) = validate_input(capability, "capability") { return e; }
             match queries::suggest_reuse(conn, capability) {
                 Ok(advisories) => json!({ "advisories": advisories }),
@@ -199,7 +206,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
             }
         }
         "register_plan" => {
-            let agent = args["agent"].as_str().unwrap_or("unknown");
+            let agent = args.get("agent").and_then(|v| v.as_str()).unwrap_or("unknown");
             if let Err(e) = validate_input(agent, "agent") { return e; }
             let actions: Vec<rulest_core::advisory::PlannedAction> = match args.get("actions") {
                 Some(a) => match serde_json::from_value(a.clone()) {

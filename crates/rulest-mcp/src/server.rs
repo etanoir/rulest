@@ -146,7 +146,10 @@ fn handle_tools_call(
             "content": [
                 {
                     "type": "text",
-                    "text": serde_json::to_string_pretty(&result).unwrap_or_default()
+                    "text": match serde_json::to_string_pretty(&result) {
+                        Ok(s) => s,
+                        Err(e) => format!("{{\"error\": \"Failed to serialize response: {}\"}}", e),
+                    }
                 }
             ],
             "isError": is_error

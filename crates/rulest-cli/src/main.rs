@@ -38,6 +38,10 @@ enum Commands {
         /// Rule kind: must_own, must_not, shared_with
         #[arg(short, long, default_value = "must_own")]
         kind: String,
+
+        /// Path to the workspace Cargo.toml
+        #[arg(short, long, default_value = "Cargo.toml")]
+        workspace: String,
     },
 
     /// Sync the registry from workspace source code
@@ -155,7 +159,8 @@ fn main() {
             crate_name,
             description,
             kind,
-        } => rule::run(&crate_name, &description, &kind),
+            workspace,
+        } => rule::run(&crate_name, &description, &kind, &workspace),
         Commands::Sync { workspace, full } => sync::run(&workspace, full),
         Commands::Query {
             symbol,

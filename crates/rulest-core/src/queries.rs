@@ -106,13 +106,13 @@ pub fn validate_boundary(
         .prepare(
             "SELECT id, crate_name, description, kind FROM ownership_rules WHERE crate_name = ?1",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query ownership rules: {}", e))?;
 
     let rules: Vec<(i64, String, String, String)> = stmt
         .query_map(params![target_crate], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
-        .map_err(|e| format!("DB error: {}", e))?
+        .map_err(|e| format!("Failed to query ownership rules: {}", e))?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -176,13 +176,13 @@ pub fn check_wip(conn: &Connection, module_path: &str) -> Result<Vec<Advisory>, 
              JOIN modules m ON s.module_id = m.id
              WHERE m.path LIKE ?1 AND s.status IN ('planned', 'wip')",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query WIP symbols: {}", e))?;
 
     let rows: Vec<(String, Option<String>, Option<String>)> = stmt
         .query_map(params![format!("%{}%", module_path)], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .map_err(|e| format!("DB error: {}", e))?
+        .map_err(|e| format!("Failed to query WIP symbols: {}", e))?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -246,7 +246,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Result<
                  JOIN crates c2 ON m.crate_id = c2.id
                  WHERE ct.description LIKE ?1 AND s.visibility = 'public'",
             )
-            .map_err(|e| format!("DB error: {}", e))?;
+            .map_err(|e| format!("Failed to query contracts: {}", e))?;
 
         let matches: Vec<ExistingSymbol> = stmt
             .query_map(params![format!("%{}%", keyword)], |row| {
@@ -264,7 +264,7 @@ pub fn suggest_reuse(conn: &Connection, capability_description: &str) -> Result<
                     location: None,
                 })
             })
-            .map_err(|e| format!("DB error: {}", e))?
+            .map_err(|e| format!("Failed to query contracts: {}", e))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -328,7 +328,7 @@ pub fn register_plan(
     for action in actions {
         // Find or create the module for the target path
         let module_id = match crate::registry::find_module_by_path(conn, &action.target)
-            .map_err(|e| format!("DB error: {}", e))?
+            .map_err(|e| format!("Failed to find module: {}", e))?
         {
             Some(m) => m.id.ok_or_else(|| "Module found but has no ID".to_string())?,
             None => {
@@ -670,7 +670,7 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Result<Vec<ExistingSym
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name = ?1",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query symbols by name: {}", e))?;
 
     let rows = stmt
         .query_map(params![name], |row| {
@@ -691,7 +691,7 @@ fn find_symbols_by_name(conn: &Connection, name: &str) -> Result<Vec<ExistingSym
                 location,
             })
         })
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query symbols by name: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
@@ -706,7 +706,7 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Result<Vec<ExistingSy
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name LIKE ?1",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to search symbols: {}", e))?;
 
     let rows = stmt
         .query_map(params![format!("%{}%", pattern)], |row| {
@@ -727,7 +727,7 @@ fn find_symbols_fuzzy(conn: &Connection, pattern: &str) -> Result<Vec<ExistingSy
                 location,
             })
         })
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to search symbols: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
@@ -759,11 +759,11 @@ fn find_implemented_traits(
              JOIN symbols s2 ON r.to_symbol_id = s2.id
              WHERE r.from_symbol_id = ?1 AND r.kind = 'implements'",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query trait implementations: {}", e))?;
 
     let rows = stmt
         .query_map(params![sid], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query trait implementations: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
@@ -804,11 +804,11 @@ pub fn get_crate_dependencies(conn: &Connection) -> Result<Vec<(String, String)>
              JOIN crates c1 ON cd.from_crate_id = c1.id
              JOIN crates c2 ON cd.to_crate_id = c2.id",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query crate dependencies: {}", e))?;
 
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query crate dependencies: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
@@ -823,7 +823,7 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingS
              JOIN crates c ON m.crate_id = c.id
              WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias', 're_export')",
         )
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query type symbols: {}", e))?;
 
     let rows = stmt
         .query_map(params![type_name], |row| {
@@ -844,7 +844,7 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingS
                 location,
             })
         })
-        .map_err(|e| format!("DB error: {}", e))?;
+        .map_err(|e| format!("Failed to query type symbols: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
