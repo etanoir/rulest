@@ -3,6 +3,16 @@ use serde_json::{json, Value};
 
 use rulest_core::queries;
 
+const MAX_INPUT_LEN: usize = 2048;
+
+fn validate_input(value: &str, field_name: &str) -> Result<(), Value> {
+    if value.len() > MAX_INPUT_LEN {
+        Err(json!({ "error": format!("'{}' exceeds maximum length of {} characters", field_name, MAX_INPUT_LEN) }))
+    } else {
+        Ok(())
+    }
+}
+
 /// Tool definitions for MCP `tools/list`.
 pub fn tool_definitions() -> Vec<Value> {
     vec![
@@ -147,6 +157,8 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         "validate_creation" => {
             let symbol_name = args["symbol_name"].as_str().unwrap_or("");
             let target_module = args["target_module"].as_str().unwrap_or("");
+            if let Err(e) = validate_input(symbol_name, "symbol_name") { return e; }
+            if let Err(e) = validate_input(target_module, "target_module") { return e; }
             match queries::validate_creation(conn, symbol_name, target_module) {
                 Ok(advisories) => json!({ "advisories": advisories }),
                 Err(e) => json!({ "error": e }),
@@ -154,6 +166,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         }
         "validate_dependency" => {
             let type_name = args["type_name"].as_str().unwrap_or("");
+            if let Err(e) = validate_input(type_name, "type_name") { return e; }
             match queries::validate_dependency(conn, type_name) {
                 Ok(advisories) => json!({ "advisories": advisories }),
                 Err(e) => json!({ "error": e }),
@@ -162,6 +175,8 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         "validate_boundary" => {
             let symbol_name = args["symbol_name"].as_str().unwrap_or("");
             let target_crate = args["target_crate"].as_str().unwrap_or("");
+            if let Err(e) = validate_input(symbol_name, "symbol_name") { return e; }
+            if let Err(e) = validate_input(target_crate, "target_crate") { return e; }
             match queries::validate_boundary(conn, symbol_name, target_crate) {
                 Ok(advisories) => json!({ "advisories": advisories }),
                 Err(e) => json!({ "error": e }),
@@ -169,6 +184,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         }
         "check_wip" => {
             let module_path = args["module_path"].as_str().unwrap_or("");
+            if let Err(e) = validate_input(module_path, "module_path") { return e; }
             match queries::check_wip(conn, module_path) {
                 Ok(advisories) => json!({ "advisories": advisories }),
                 Err(e) => json!({ "error": e }),
@@ -176,6 +192,7 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         }
         "suggest_reuse" => {
             let capability = args["capability"].as_str().unwrap_or("");
+            if let Err(e) = validate_input(capability, "capability") { return e; }
             match queries::suggest_reuse(conn, capability) {
                 Ok(advisories) => json!({ "advisories": advisories }),
                 Err(e) => json!({ "error": e }),
@@ -183,20 +200,27 @@ pub fn call_tool(conn: &Connection, tool_name: &str, args: &Value) -> Value {
         }
         "register_plan" => {
             let agent = args["agent"].as_str().unwrap_or("unknown");
-            let actions: Vec<rulest_core::advisory::PlannedAction> = args
-                .get("actions")
-                .and_then(|a| serde_json::from_value(a.clone()).ok())
-                .unwrap_or_default();
+            if let Err(e) = validate_input(agent, "agent") { return e; }
+            let actions: Vec<rulest_core::advisory::PlannedAction> = match args.get("actions") {
+                Some(a) => match serde_json::from_value(a.clone()) {
+                    Ok(parsed) => parsed,
+                    Err(e) => return json!({ "error": format!("Invalid 'actions' format: {}", e) }),
+                },
+                None => return json!({ "error": "Missing required field 'actions'" }),
+            };
             match queries::register_plan(conn, &actions, agent) {
                 Ok(count) => json!({ "registered": count, "total": actions.len() }),
                 Err(e) => json!({ "error": e }),
             }
         }
         "validate_plan" => {
-            let actions: Vec<rulest_core::advisory::PlannedAction> = args
-                .get("actions")
-                .and_then(|a| serde_json::from_value(a.clone()).ok())
-                .unwrap_or_default();
+            let actions: Vec<rulest_core::advisory::PlannedAction> = match args.get("actions") {
+                Some(a) => match serde_json::from_value(a.clone()) {
+                    Ok(parsed) => parsed,
+                    Err(e) => return json!({ "error": format!("Invalid 'actions' format: {}", e) }),
+                },
+                None => return json!({ "error": "Missing required field 'actions'" }),
+            };
             match queries::validate_plan(conn, &actions) {
                 Ok(report) => json!(report),
                 Err(e) => json!({ "error": e }),

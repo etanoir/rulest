@@ -6,10 +6,22 @@ use rulest_indexer::sync::sync_workspace;
 pub fn run(workspace_path: &str, force_full: bool) -> Result<(), String> {
     let workspace = Path::new(workspace_path);
     let workspace_dir = if workspace.is_file() {
+        if workspace.file_name().and_then(|n| n.to_str()) != Some("Cargo.toml") {
+            return Err(format!(
+                "Expected Cargo.toml but got '{}'",
+                workspace.display()
+            ));
+        }
         workspace
             .parent()
             .ok_or("Cannot determine workspace directory")?
     } else {
+        if !workspace.join("Cargo.toml").exists() {
+            return Err(format!(
+                "No Cargo.toml found in '{}'",
+                workspace.display()
+            ));
+        }
         workspace
     };
 

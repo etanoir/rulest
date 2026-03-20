@@ -1261,3 +1261,163 @@ fn test_full_init_sync_query_pipeline() {
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+// ============================================================================
+// Issue #35: Increased Integration Test Coverage
+// ============================================================================
+
+#[test]
+fn test_query_tools_integration() {
+    use rulest_core::models::*;
+    use rulest_core::{queries, registry};
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    registry::create_schema(&conn).unwrap();
+
+    let c = Crate {
+        id: None,
+        name: "mylib".to_string(),
+        path: "crates/mylib".to_string(),
+        description: None,
+        bounded_context: None,
+    };
+    let crate_id = registry::insert_crate(&conn, &c).unwrap();
+
+    let m = Module {
+        id: None,
+        crate_id,
+        path: "crates/mylib/src/lib.rs".to_string(),
+        name: "lib".to_string(),
+    };
+    let module_id = registry::insert_module(&conn, &m).unwrap();
+
+    let s = Symbol {
+        id: None,
+        module_id,
+        name: "process_data".to_string(),
+        kind: SymbolKind::Function,
+        visibility: Visibility::Public,
+        signature: Some("fn process_data(input: &str) -> Result<String, Error>".to_string()),
+        line_number: Some(10),
+        scope: None,
+        status: SymbolStatus::Stable,
+        created_by: None,
+        created_at: None,
+        updated_at: None,
+    };
+    registry::insert_symbol(&conn, &s).unwrap();
+
+    // validate_creation should find the existing symbol
+    let advisories = queries::validate_creation(&conn, "process_data", "other/lib.rs").unwrap();
+    assert!(!advisories.is_empty(), "Should find existing process_data");
+
+    // validate_dependency should find no type (it's a function)
+    let _dep_advisories = queries::validate_dependency(&conn, "process_data").unwrap();
+    // Functions aren't types, so this may return empty or not — just verify no error
+
+    // suggest_reuse should find something related to "process" or "data"
+    let _reuse_advisories = queries::suggest_reuse(&conn, "data processing").unwrap();
+    // Just verify it returns without error — no panic = success
+}
+
+#[test]
+fn test_register_plan_and_check_wip() {
+    use rulest_core::models::*;
+    use rulest_core::{queries, registry};
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    registry::create_schema(&conn).unwrap();
+
+    let c = Crate {
+        id: None,
+        name: "mylib".to_string(),
+        path: "crates/mylib".to_string(),
+        description: None,
+        bounded_context: None,
+    };
+    let crate_id = registry::insert_crate(&conn, &c).unwrap();
+
+    let m = Module {
+        id: None,
+        crate_id,
+        path: "crates/mylib/src/handlers.rs".to_string(),
+        name: "handlers".to_string(),
+    };
+    registry::insert_module(&conn, &m).unwrap();
+
+    // Register a plan
+    let actions = vec![rulest_core::advisory::PlannedAction {
+        action: "create".to_string(),
+        symbol: "new_handler".to_string(),
+        target: "crates/mylib/src/handlers.rs".to_string(),
+        crate_name: Some("mylib".to_string()),
+        kind: Some("function".to_string()),
+    }];
+    let registered = queries::register_plan(&conn, &actions, "test-agent").unwrap();
+    assert_eq!(registered, 1, "Should register 1 planned symbol");
+
+    // check_wip should now detect the planned symbol
+    let advisories = queries::check_wip(&conn, "handlers").unwrap();
+    assert!(
+        advisories
+            .iter()
+            .any(|a| matches!(a, rulest_core::advisory::Advisory::WipConflict { .. })),
+        "Should detect WIP conflict for the planned symbol, got: {:?}",
+        advisories
+    );
+}
+
+#[test]
+fn test_init_idempotency() {
+    use rulest_core::models::*;
+    use rulest_core::registry;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    registry::create_schema(&conn).unwrap();
+
+    // Insert a crate (simulating first init)
+    let c = Crate {
+        id: None,
+        name: "existing-crate".to_string(),
+        path: "crates/existing".to_string(),
+        description: None,
+        bounded_context: None,
+    };
+    registry::insert_crate(&conn, &c).unwrap();
+
+    // Call create_schema again (simulating second init)
+    registry::create_schema(&conn).unwrap();
+
+    // Data should still be there
+    let found = registry::find_crate_by_name(&conn, "existing-crate").unwrap();
+    assert!(found.is_some(), "Crate should survive second create_schema call");
+
+    // Schema version should still be correct
+    let version = registry::get_schema_version(&conn).unwrap();
+    assert_eq!(version, registry::SCHEMA_VERSION);
+}
+
+#[test]
+fn test_mcp_register_plan_rejects_malformed_actions() {
+    use rulest_core::registry;
+    use serde_json::json;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    registry::create_schema(&conn).unwrap();
+
+    // Send malformed actions (string instead of array of objects)
+    let result = rulest_mcp::tools::call_tool(
+        &conn,
+        "register_plan",
+        &json!({
+            "agent": "test-agent",
+            "actions": "not an array"
+        }),
+    );
+
+    assert!(
+        result.get("error").is_some(),
+        "Should return error for malformed actions, got: {:?}",
+        result
+    );
+}

@@ -34,7 +34,13 @@ struct SyncLog {
 impl SyncLog {
     fn load(path: &Path) -> Self {
         if let Ok(contents) = fs::read_to_string(path) {
-            serde_json::from_str(&contents).unwrap_or_default()
+            match serde_json::from_str(&contents) {
+                Ok(log) => log,
+                Err(e) => {
+                    eprintln!("Warning: corrupted sync.log ({}), triggering full resync", e);
+                    Self::default()
+                }
+            }
         } else {
             Self::default()
         }
@@ -76,12 +82,20 @@ impl SyncLock {
 
         if lock_path.exists() {
             // Read existing lock
-            let contents = fs::read_to_string(&lock_path)
-                .map_err(|e| format!("Failed to read lock file: {}", e))?;
-            let existing_pid: u32 = contents
-                .trim()
-                .parse()
-                .unwrap_or(0);
+            let contents = fs::read_to_string(&lock_path).map_err(|e| {
+                let context = match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => "permission denied",
+                    _ => "I/O error",
+                };
+                format!("Failed to read lock file ({}): {}", context, e)
+            })?;
+            let existing_pid: u32 = match contents.trim().parse() {
+                Ok(pid) => pid,
+                Err(_) => {
+                    eprintln!("Warning: corrupted lock file (non-numeric PID), treating as stale");
+                    0
+                }
+            };
 
             // Check if the lock is stale by age
             let is_stale = match fs::metadata(&lock_path) {
@@ -328,8 +342,14 @@ pub fn sync_workspace(
 }
 
 fn file_content_hash(path: &Path) -> Result<String, String> {
-    let contents = fs::read(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let contents = fs::read(path).map_err(|e| {
+        let context = match e.kind() {
+            std::io::ErrorKind::PermissionDenied => "permission denied",
+            std::io::ErrorKind::NotFound => "file not found",
+            _ => "I/O error",
+        };
+        format!("Failed to read {} ({}): {}", path.display(), context, e)
+    })?;
     let mut hasher = Sha256::new();
     hasher.update(&contents);
     Ok(format!("{:x}", hasher.finalize()))

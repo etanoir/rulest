@@ -22,11 +22,21 @@ pub fn run(workspace_path: &str) -> Result<(), String> {
     fs::create_dir_all(&architect_dir)
         .map_err(|e| format!("Failed to create .architect/: {}", e))?;
 
-    // Create registry database with schema
+    // Create registry database with schema (handles migration if needed)
     let conn = registry::open_registry(&db_path)
         .map_err(|e| format!("Failed to create registry: {}", e))?;
     registry::create_schema(&conn)
         .map_err(|e| format!("Failed to create schema: {}", e))?;
+
+    // Check if registry already has data — if so, skip re-initialization
+    let crate_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM crates", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to query crates: {}", e))?;
+
+    if crate_count > 0 {
+        println!("Registry already initialized at {}", architect_dir.display());
+        return Ok(());
+    }
 
     // Extract workspace info and populate crates
     let info = cargo_meta::extract_workspace(workspace)?;

@@ -29,7 +29,8 @@ pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to read stdin: {}", e))?;
 
         if bytes_read == 0 {
-            break; // EOF
+            eprintln!("MCP client disconnected, shutting down");
+            break;
         }
 
         let trimmed = line.trim();
@@ -54,7 +55,21 @@ pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
         };
 
         let id = request.get("id").cloned();
-        let method = request["method"].as_str().unwrap_or("");
+        let method = match request.get("method").and_then(|m| m.as_str()) {
+            Some(m) if !m.is_empty() => m,
+            _ => {
+                let error_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32600,
+                        "message": "Invalid Request: missing or empty 'method' field"
+                    }
+                });
+                write_response(&mut stdout, &error_response).await?;
+                continue;
+            }
+        };
         let is_notification = id.is_none() || id.as_ref() == Some(&Value::Null);
 
         let response = match method {
