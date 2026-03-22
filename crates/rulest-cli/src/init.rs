@@ -1,8 +1,76 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use rulest_core::registry;
 use rulest_indexer::cargo_meta;
+
+/// File-based lock to prevent concurrent init operations.
+struct InitLock {
+    path: PathBuf,
+}
+
+impl InitLock {
+    fn acquire(architect_dir: &Path) -> Result<Self, String> {
+        let lock_path = architect_dir.join("init.lock");
+
+        if lock_path.exists() {
+            let contents = fs::read_to_string(&lock_path).unwrap_or_default();
+            let existing_pid: u32 = contents.trim().parse().unwrap_or(0);
+
+            let is_stale = match fs::metadata(&lock_path) {
+                Ok(meta) => match meta.modified() {
+                    Ok(modified) => match SystemTime::now().duration_since(modified) {
+                        Ok(age) => age.as_secs() > 120, // 2 minutes for init
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+
+            if !is_stale && existing_pid != 0 && is_process_alive(existing_pid) {
+                return Err(format!(
+                    "Another init process (PID {}) is currently running. \
+                     If this is incorrect, remove {}",
+                    existing_pid,
+                    lock_path.display()
+                ));
+            }
+        }
+
+        let pid = std::process::id();
+        fs::write(&lock_path, pid.to_string())
+            .map_err(|e| format!("Failed to create init lock: {}", e))?;
+
+        Ok(InitLock { path: lock_path })
+    }
+}
+
+impl Drop for InitLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn is_process_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
 
 pub fn run(workspace_path: &str) -> Result<(), String> {
     let workspace = Path::new(workspace_path);
@@ -35,6 +103,9 @@ pub fn run(workspace_path: &str) -> Result<(), String> {
     // Create .architect/ directory
     fs::create_dir_all(&architect_dir)
         .map_err(|e| format!("Failed to create .architect/: {}", e))?;
+
+    // Acquire init lock to prevent concurrent init corruption
+    let _lock = InitLock::acquire(&architect_dir)?;
 
     // Create registry database with schema (handles migration if needed)
     let conn = registry::open_registry(&db_path)
