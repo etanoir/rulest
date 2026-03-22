@@ -90,6 +90,33 @@ pub fn validate_creation(
         return Ok(advisories);
     }
 
+    // Check linked (external) registries
+    if let Ok(linked) = find_linked_symbols(conn, symbol_name) {
+        if !linked.is_empty() {
+            let existing = &linked[0];
+            advisories.push(Advisory::ReuseExisting {
+                existing: ExistingSymbol {
+                    name: existing.name.clone(),
+                    kind: existing.kind.clone().unwrap_or_else(|| "unknown".to_string()),
+                    module_path: existing.module_path.clone().unwrap_or_default(),
+                    crate_name: format!("{}::{}", existing.source_name, existing.crate_name.as_deref().unwrap_or("?")),
+                    signature: existing.signature.clone(),
+                    visibility: "public".to_string(),
+                    call_sites: None,
+                    created_by: None,
+                    line_number: None,
+                    scope: None,
+                    location: None,
+                },
+                suggestion: format!(
+                    "Symbol '{}' exists in linked registry '{}'. Reuse it instead of creating a duplicate.",
+                    symbol_name, existing.source_name
+                ),
+            });
+            return Ok(advisories);
+        }
+    }
+
     advisories.push(Advisory::SafeToCreate {
         symbol: symbol_name.to_string(),
         target: target_module.to_string(),
@@ -143,13 +170,13 @@ pub fn validate_boundary(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, crate_name, description, kind FROM ownership_rules WHERE crate_name = ?1",
+            "SELECT id, crate_name, description, kind, pattern, regex FROM ownership_rules WHERE crate_name = ?1",
         )
         .map_err(|e| format!("Failed to query ownership rules: {}", e))?;
 
-    let rules: Vec<(i64, String, String, String)> = stmt
+    let rules: Vec<(i64, String, String, String, Option<String>, Option<String>)> = stmt
         .query_map(params![target_crate], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })
         .map_err(|e| format!("Failed to query ownership rules: {}", e))?
         .filter_map(|r| r.ok())
@@ -164,12 +191,20 @@ pub fn validate_boundary(
         })
         .unwrap_or_default();
 
-    for (_id, crate_name, description, kind) in &rules {
+    for (_id, crate_name, description, kind, pattern, regex) in &rules {
         if kind == "must_not" {
-            // Extract keywords from the rule description and check if the symbol
-            // name relates to any of the forbidden concerns. This prevents false
-            // positives where unrelated symbols trigger boundary violations.
-            if !symbol_matches_rule(symbol_name, description) {
+            // Check pattern-based rules first (glob patterns)
+            let pattern_match = pattern.as_ref().is_some_and(|p| glob_matches(symbol_name, p));
+
+            // Check regex-based rules
+            let regex_match = regex.as_ref().is_some_and(|r| regex_matches(symbol_name, r));
+
+            // Fall back to semantic text-based matching if no pattern/regex defined
+            let text_match = pattern.is_none()
+                && regex.is_none()
+                && symbol_matches_rule(symbol_name, description);
+
+            if !pattern_match && !regex_match && !text_match {
                 continue;
             }
 
@@ -698,6 +733,30 @@ fn group_count(conn: &Connection, sql: &str) -> Vec<(String, usize)> {
 
 // ---- Internal helpers ----
 
+fn find_linked_symbols(conn: &Connection, name: &str) -> Result<Vec<crate::models::LinkedSymbol>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, source_name, name, kind, crate_name, module_path, signature, linked_at
+             FROM linked_symbols WHERE name = ?1",
+        )
+        .map_err(|e| format!("Failed to query linked symbols: {}", e))?;
+    let rows = stmt
+        .query_map(params![name], |row| {
+            Ok(crate::models::LinkedSymbol {
+                id: Some(row.get(0)?),
+                source_name: row.get(1)?,
+                name: row.get(2)?,
+                kind: row.get(3)?,
+                crate_name: row.get(4)?,
+                module_path: row.get(5)?,
+                signature: row.get(6)?,
+                linked_at: row.get(7)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query linked symbols: {}", e))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 fn find_symbols_by_name(conn: &Connection, name: &str) -> Result<Vec<ExistingSymbol>, String> {
     let mut stmt = conn
         .prepare(
@@ -885,6 +944,94 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingS
         })
         .map_err(|e| format!("Failed to query type symbols: {}", e))?;
     Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Match a symbol name against comma-separated glob patterns.
+/// Supports `*` as wildcard (e.g., "Sql*,*Repository,Pg*").
+fn glob_matches(symbol_name: &str, patterns: &str) -> bool {
+    for pattern in patterns.split(',') {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            continue;
+        }
+        if glob_match_single(symbol_name, pattern) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Match a single glob pattern (supports `*` wildcard only).
+fn glob_match_single(name: &str, pattern: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        // No wildcard — exact match
+        return name == pattern;
+    }
+
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(found) = name[pos..].find(part) {
+            if i == 0 && found != 0 {
+                // First part must match start
+                return false;
+            }
+            pos += found + part.len();
+        } else {
+            return false;
+        }
+    }
+    // If pattern doesn't end with *, last part must match end
+    if !pattern.ends_with('*') {
+        return name.ends_with(parts.last().unwrap_or(&""));
+    }
+    true
+}
+
+/// Match a symbol name against a regex-like pattern.
+/// Supports: `^` (start anchor), `$` (end anchor), `|` (alternation), `()` (grouping).
+/// For more complex regex, users should use glob patterns instead.
+fn regex_matches(symbol_name: &str, pattern: &str) -> bool {
+    let anchored_start = pattern.starts_with('^');
+    let anchored_end = pattern.ends_with('$');
+
+    // Strip outer anchors
+    let inner = pattern
+        .trim_start_matches('^')
+        .trim_end_matches('$');
+
+    // Strip outer parens if present: ^(A|B|C)$ -> A|B|C
+    let inner = if inner.starts_with('(') && inner.ends_with(')') {
+        &inner[1..inner.len() - 1]
+    } else {
+        inner
+    };
+
+    // Split alternatives on `|`
+    for alt in inner.split('|') {
+        let alt = alt.trim();
+        if alt.is_empty() {
+            continue;
+        }
+
+        let matched = if anchored_start && anchored_end {
+            symbol_name == alt
+        } else if anchored_start {
+            symbol_name.starts_with(alt)
+        } else if anchored_end {
+            symbol_name.ends_with(alt)
+        } else {
+            symbol_name.contains(alt)
+        };
+
+        if matched {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if a symbol name is related to the concerns described in a must_not rule.
@@ -1112,6 +1259,8 @@ mod tests {
                 crate_name: "domain".to_string(),
                 description: "No infrastructure concerns".to_string(),
                 kind: OwnershipRuleKind::MustNot,
+                pattern: None,
+                regex: None,
             },
         )
         .unwrap();

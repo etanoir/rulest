@@ -1,5 +1,7 @@
 mod build;
+mod check;
 mod init;
+mod link;
 mod query;
 mod register;
 mod rule;
@@ -42,6 +44,14 @@ enum Commands {
         /// Path to the workspace Cargo.toml
         #[arg(short, long, default_value = "Cargo.toml")]
         workspace: String,
+
+        /// Glob patterns for symbol name matching (comma-separated, e.g. "Sql*,*Repository")
+        #[arg(long)]
+        pattern: Option<String>,
+
+        /// Regex pattern for symbol name matching
+        #[arg(long)]
+        regex: Option<String>,
     },
 
     /// Sync the registry from workspace source code
@@ -129,6 +139,10 @@ enum Commands {
         /// Path to the registry database
         #[arg(short, long, default_value = ".architect/registry.db")]
         db: String,
+
+        /// Enable auto-validate mode (respond to file_changed notifications)
+        #[arg(long)]
+        auto_validate: bool,
     },
 
     /// Generate CLAUDE.md, settings.json, and seed.sql templates
@@ -148,6 +162,54 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         cargo_args: Vec<String>,
     },
+
+    /// Check a single file for architecture violations
+    CheckFile {
+        /// Path to the .rs file to check
+        file: String,
+
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
+
+    /// Check staged files for architecture violations (pre-commit hook)
+    Check {
+        /// Only check staged (git cached) files
+        #[arg(long)]
+        changed_only: bool,
+
+        /// Path to the registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
+
+    /// Link an external registry for cross-repo symbol lookup
+    Link {
+        /// Name for the linked registry
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Path to the external registry database
+        #[arg(long)]
+        db_path: Option<String>,
+
+        /// Refresh all linked registries
+        #[arg(long)]
+        refresh: bool,
+
+        /// List linked registries
+        #[arg(long)]
+        list: bool,
+
+        /// Remove a linked registry by name
+        #[arg(long)]
+        remove: Option<String>,
+
+        /// Path to the local registry database
+        #[arg(short, long, default_value = ".architect/registry.db")]
+        db: String,
+    },
 }
 
 fn main() {
@@ -160,7 +222,16 @@ fn main() {
             description,
             kind,
             workspace,
-        } => rule::run(&crate_name, &description, &kind, &workspace),
+            pattern,
+            regex,
+        } => rule::run(
+            &crate_name,
+            &description,
+            &kind,
+            &workspace,
+            pattern.as_deref(),
+            regex.as_deref(),
+        ),
         Commands::Sync { workspace, full } => sync::run(&workspace, full),
         Commands::Query {
             symbol,
@@ -186,12 +257,40 @@ fn main() {
         Commands::Validate { plan, db } => validate::run(&plan, &db),
         Commands::RegisterPlan { plan, agent, db } => register::run(&plan, &db, &agent),
         Commands::Status { db } => status::run(&db),
-        Commands::Serve { db } => serve::run(&db),
+        Commands::Serve { db, auto_validate } => serve::run_with_options(&db, auto_validate),
         Commands::Scaffold { workspace } => scaffold::run(&workspace),
         Commands::Build {
             workspace,
             cargo_args,
         } => build::run(&workspace, &cargo_args),
+        Commands::CheckFile { file, db } => check::run_check_file(&file, &db),
+        Commands::Check { changed_only, db } => {
+            if changed_only {
+                check::run_check_changed(&db)
+            } else {
+                Err("Use --changed-only to check staged files".to_string())
+            }
+        }
+        Commands::Link {
+            name,
+            db_path,
+            refresh,
+            list,
+            remove,
+            db,
+        } => {
+            if list {
+                link::run_list(&db)
+            } else if refresh {
+                link::run_refresh(&db)
+            } else if let Some(remove_name) = remove {
+                link::run_remove(&remove_name, &db)
+            } else if let (Some(n), Some(p)) = (name, db_path) {
+                link::run_link(&n, &p, &db)
+            } else {
+                Err("Usage: rulest link --name <name> --db-path <path> | --list | --refresh | --remove <name>".to_string())
+            }
+        }
     };
 
     if let Err(e) = result {

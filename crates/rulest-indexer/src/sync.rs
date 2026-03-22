@@ -307,8 +307,15 @@ pub fn sync_workspace(
                 }
             }
 
-            // Update sync log
-            sync_log.files.insert(module_info.path.clone(), content_hash);
+            // Update sync log only if extraction succeeded (avoid caching partial/failed parses)
+            let final_hash = match file_content_hash(&file_path) {
+                Ok(h) => h,
+                Err(_) => content_hash.clone(),
+            };
+            if final_hash == content_hash {
+                sync_log.files.insert(module_info.path.clone(), content_hash);
+            }
+            // If hash changed between first read and now, don't cache — next sync will re-process
         }
     }
 

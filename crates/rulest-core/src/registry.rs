@@ -5,9 +5,9 @@ use rusqlite::{Connection, Result as SqlResult};
 #[allow(unused_imports)]
 use crate::models::*;
 
-/// Current schema version. Set to 2 as the first migration-aware version.
+/// Current schema version. Set to 3 for pattern-based rules and linked symbols.
 /// Versions 0 and 1 are considered pre-migration databases.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS crates (
@@ -73,8 +73,29 @@ CREATE TABLE IF NOT EXISTS ownership_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     crate_name TEXT NOT NULL,
     description TEXT NOT NULL,
-    kind TEXT NOT NULL
+    kind TEXT NOT NULL,
+    pattern TEXT,
+    regex TEXT
 );
+
+CREATE TABLE IF NOT EXISTS linked_registries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL,
+    linked_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS linked_symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT,
+    crate_name TEXT,
+    module_path TEXT,
+    signature TEXT,
+    linked_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_linked_name ON linked_symbols(name);
 
 CREATE TABLE IF NOT EXISTS crate_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,7 +161,9 @@ fn migrate(conn: &Connection, from_version: i32) -> SqlResult<()> {
     if from_version < 2 {
         migrate_to_v2(conn)?;
     }
-    // Future: if from_version < 3 { migrate_to_v3(conn)?; }
+    if from_version < 3 {
+        migrate_to_v3(conn)?;
+    }
     Ok(())
 }
 
@@ -150,6 +173,34 @@ fn migrate(conn: &Connection, from_version: i32) -> SqlResult<()> {
 fn migrate_to_v2(conn: &Connection) -> SqlResult<()> {
     // Ensure all tables exist (idempotent due to IF NOT EXISTS)
     conn.execute_batch(SCHEMA_SQL)
+}
+
+/// Migration to v3: adds pattern/regex columns to ownership_rules,
+/// linked_registries and linked_symbols tables.
+fn migrate_to_v3(conn: &Connection) -> SqlResult<()> {
+    // Add pattern/regex columns (ignore error if they already exist)
+    let _ = conn.execute_batch("ALTER TABLE ownership_rules ADD COLUMN pattern TEXT");
+    let _ = conn.execute_batch("ALTER TABLE ownership_rules ADD COLUMN regex TEXT");
+    // Create new tables (IF NOT EXISTS is idempotent)
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS linked_registries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL,
+            linked_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS linked_symbols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT,
+            crate_name TEXT,
+            module_path TEXT,
+            signature TEXT,
+            linked_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_linked_name ON linked_symbols(name);"
+    )
 }
 
 /// Insert a crate, returning its id.
@@ -234,10 +285,71 @@ pub fn insert_contract(conn: &Connection, c: &Contract) -> SqlResult<i64> {
 /// Insert an ownership rule.
 pub fn insert_ownership_rule(conn: &Connection, r: &OwnershipRule) -> SqlResult<i64> {
     conn.execute(
-        "INSERT INTO ownership_rules (crate_name, description, kind) VALUES (?1, ?2, ?3)",
-        rusqlite::params![r.crate_name, r.description, r.kind.as_str()],
+        "INSERT INTO ownership_rules (crate_name, description, kind, pattern, regex) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![r.crate_name, r.description, r.kind.as_str(), r.pattern, r.regex],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Insert a linked registry entry.
+pub fn insert_linked_registry(conn: &Connection, r: &LinkedRegistry) -> SqlResult<i64> {
+    conn.execute(
+        "INSERT OR REPLACE INTO linked_registries (name, path, linked_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![r.name, r.path, r.linked_at],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Remove a linked registry and its symbols.
+pub fn remove_linked_registry(conn: &Connection, name: &str) -> SqlResult<()> {
+    conn.execute("DELETE FROM linked_symbols WHERE source_name = ?1", rusqlite::params![name])?;
+    conn.execute("DELETE FROM linked_registries WHERE name = ?1", rusqlite::params![name])?;
+    Ok(())
+}
+
+/// List all linked registries.
+pub fn list_linked_registries(conn: &Connection) -> SqlResult<Vec<LinkedRegistry>> {
+    let mut stmt = conn.prepare("SELECT id, name, path, linked_at FROM linked_registries")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(LinkedRegistry {
+            id: Some(row.get(0)?),
+            name: row.get(1)?,
+            path: row.get(2)?,
+            linked_at: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Insert a linked symbol from an external registry.
+pub fn insert_linked_symbol(conn: &Connection, s: &LinkedSymbol) -> SqlResult<i64> {
+    conn.execute(
+        "INSERT INTO linked_symbols (source_name, name, kind, crate_name, module_path, signature, linked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![s.source_name, s.name, s.kind, s.crate_name, s.module_path, s.signature, s.linked_at],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Clear all linked symbols from a given source.
+pub fn clear_linked_symbols(conn: &Connection, source_name: &str) -> SqlResult<()> {
+    conn.execute("DELETE FROM linked_symbols WHERE source_name = ?1", rusqlite::params![source_name])?;
+    Ok(())
+}
+
+/// Query all public symbols from a registry (for cross-repo linking).
+/// Returns (name, kind, module_path, crate_name, signature).
+pub fn query_public_symbols(conn: &Connection) -> SqlResult<Vec<(String, String, String, String, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.kind, m.path, c.name, s.signature
+         FROM symbols s
+         JOIN modules m ON s.module_id = m.id
+         JOIN crates c ON m.crate_id = c.id
+         WHERE s.visibility = 'public'"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    })?;
+    rows.collect()
 }
 
 /// Insert a crate dependency, ignoring duplicates.

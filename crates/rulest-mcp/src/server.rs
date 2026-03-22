@@ -13,8 +13,14 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// Run the MCP server over stdio (JSON-RPC 2.0).
 pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
+    run_stdio_with_options(db_path, false).await
+}
+
+/// Run the MCP server over stdio with optional auto-validate mode.
+pub async fn run_stdio_with_options(db_path: &Path, auto_validate: bool) -> Result<(), String> {
     let conn = registry::open_registry(db_path)
         .map_err(|e| format!("Failed to open registry: {}", e))?;
+    let _ = auto_validate; // Used in notification handling below
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -97,6 +103,23 @@ pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
                 let params = request.get("params").cloned().unwrap_or(json!({}));
                 Some(handle_tools_call(id, &params, &conn))
             }
+            "notifications/file_changed" if auto_validate => {
+                let params = request.get("params").cloned().unwrap_or(json!({}));
+                let advisories = handle_file_changed(&params, &conn);
+                if !advisories.is_empty() {
+                    // Send advisory notification back
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/advisories",
+                        "params": {
+                            "file": params.get("path").and_then(|p| p.as_str()).unwrap_or(""),
+                            "advisories": advisories
+                        }
+                    });
+                    write_response(&mut stdout, &notification).await?;
+                }
+                None // Notifications don't get a response
+            }
             _ if is_notification => None, // Notifications get no response per JSON-RPC 2.0
             _ => {
                 Some(json!({
@@ -173,6 +196,58 @@ fn handle_tools_call(
             "isError": is_error
         }
     })
+}
+
+fn handle_file_changed(params: &Value, conn: &rusqlite::Connection) -> Vec<Value> {
+    use rulest_core::queries;
+
+    let file_path = match params.get("path").and_then(|p| p.as_str()) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    // Try to parse the file and validate each symbol
+    let path = std::path::Path::new(file_path);
+    if !path.exists() {
+        return Vec::new();
+    }
+
+    let extracted = match rulest_indexer::extractor::extract_symbols(path) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let crate_name = if let Some(rest) = file_path.strip_prefix("crates/") {
+        rest.find('/').map(|idx| rest[..idx].to_string())
+    } else {
+        None
+    };
+
+    let mut advisories = Vec::new();
+    for sym in &extracted.symbols {
+        if let Ok(creation) = queries::validate_creation(conn, &sym.name, file_path) {
+            for a in &creation {
+                let val = serde_json::to_value(a).unwrap_or(json!(null));
+                if !val.is_null() {
+                    advisories.push(val);
+                }
+            }
+        }
+        if let Some(ref cn) = crate_name {
+            if let Ok(boundary) = queries::validate_boundary(conn, &sym.name, cn) {
+                for a in &boundary {
+                    if matches!(a, rulest_core::advisory::Advisory::BoundaryViolation { .. }) {
+                        let val = serde_json::to_value(a).unwrap_or(json!(null));
+                        if !val.is_null() {
+                            advisories.push(val);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    advisories
 }
 
 async fn write_response(

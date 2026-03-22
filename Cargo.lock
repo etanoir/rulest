@@ -391,6 +391,7 @@ name = "rulest-mcp"
 version = "1.5.1"
 dependencies = [
  "rulest-core",
+ "rulest-indexer",
  "rusqlite",
  "serde",
  "serde_json",

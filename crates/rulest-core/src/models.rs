@@ -64,6 +64,34 @@ pub struct OwnershipRule {
     pub crate_name: String,
     pub description: String,
     pub kind: OwnershipRuleKind,
+    /// Glob patterns for symbol name matching (comma-separated, e.g. "Sql*,*Repository")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// Regex pattern for symbol name matching
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub regex: Option<String>,
+}
+
+/// A linked external registry for cross-repo symbol lookup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkedRegistry {
+    pub id: Option<i64>,
+    pub name: String,
+    pub path: String,
+    pub linked_at: String,
+}
+
+/// A symbol imported from a linked external registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkedSymbol {
+    pub id: Option<i64>,
+    pub source_name: String,
+    pub name: String,
+    pub kind: Option<String>,
+    pub crate_name: Option<String>,
+    pub module_path: Option<String>,
+    pub signature: Option<String>,
+    pub linked_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

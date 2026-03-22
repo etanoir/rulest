@@ -341,6 +341,8 @@ fn test_add_rule_and_validate_boundary() {
         crate_name: "domain".to_string(),
         description: "No HTTP clients, network, or infrastructure concerns".to_string(),
         kind: OwnershipRuleKind::MustNot,
+        pattern: None,
+        regex: None,
     };
     registry::insert_ownership_rule(&conn, &rule).unwrap();
 
@@ -440,6 +442,8 @@ fn test_add_rule_must_own_and_must_not() {
         crate_name: "domain".to_string(),
         description: "Owns all pricing and fee calculation logic".to_string(),
         kind: OwnershipRuleKind::MustOwn,
+        pattern: None,
+        regex: None,
     };
     registry::insert_ownership_rule(&conn, &must_own_rule).unwrap();
 
@@ -449,6 +453,8 @@ fn test_add_rule_must_own_and_must_not() {
         crate_name: "domain".to_string(),
         description: "No HTTP clients, network, or infrastructure concerns".to_string(),
         kind: OwnershipRuleKind::MustNot,
+        pattern: None,
+        regex: None,
     };
     registry::insert_ownership_rule(&conn, &must_not_rule).unwrap();
 
@@ -581,6 +587,8 @@ fn test_status_returns_detailed_stats() {
         crate_name: "test-crate".to_string(),
         description: "test rule".to_string(),
         kind: OwnershipRuleKind::MustOwn,
+        pattern: None,
+        regex: None,
     };
     registry::insert_ownership_rule(&conn, &rule).unwrap();
 
@@ -1206,6 +1214,8 @@ fn test_full_init_sync_query_pipeline() {
         crate_name: "domain".to_string(),
         description: "No HTTP clients or network concerns".to_string(),
         kind: OwnershipRuleKind::MustNot,
+        pattern: None,
+        regex: None,
     };
     registry::insert_ownership_rule(&conn, &rule).unwrap();
 
@@ -1426,4 +1436,154 @@ fn test_mcp_register_plan_rejects_malformed_actions() {
         "Should return error for malformed actions, got: {:?}",
         result
     );
+}
+
+// ============================================================================
+// New Feature Tests
+// ============================================================================
+
+#[test]
+fn test_pattern_based_boundary_rules() {
+    use rulest_core::models::*;
+    use rulest_core::registry::*;
+    use rulest_core::queries;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    create_schema(&conn).unwrap();
+
+    let c = Crate { id: None, name: "core".to_string(), path: "crates/core".to_string(), description: None, bounded_context: None };
+    insert_crate(&conn, &c).unwrap();
+
+    let rule = OwnershipRule {
+        id: None, crate_name: "core".to_string(), description: "No SQL types".to_string(),
+        kind: OwnershipRuleKind::MustNot, pattern: Some("Sql*,*Repository,Pg*".to_string()), regex: None,
+    };
+    insert_ownership_rule(&conn, &rule).unwrap();
+
+    // SqlConnection matches "Sql*"
+    let a = queries::validate_boundary(&conn, "SqlConnection", "core").unwrap();
+    assert!(a.iter().any(|a| matches!(a, rulest_core::advisory::Advisory::BoundaryViolation { .. })),
+        "SqlConnection should violate Sql*, got: {:?}", a);
+
+    // UserRepository matches "*Repository"
+    let a = queries::validate_boundary(&conn, "UserRepository", "core").unwrap();
+    assert!(a.iter().any(|a| matches!(a, rulest_core::advisory::Advisory::BoundaryViolation { .. })),
+        "UserRepository should violate *Repository, got: {:?}", a);
+
+    // PgPool matches "Pg*"
+    let a = queries::validate_boundary(&conn, "PgPool", "core").unwrap();
+    assert!(a.iter().any(|a| matches!(a, rulest_core::advisory::Advisory::BoundaryViolation { .. })),
+        "PgPool should violate Pg*, got: {:?}", a);
+
+    // UserService should NOT match any pattern
+    let a = queries::validate_boundary(&conn, "UserService", "core").unwrap();
+    assert!(a.iter().all(|a| matches!(a, rulest_core::advisory::Advisory::SafeToCreate { .. })),
+        "UserService should be safe, got: {:?}", a);
+}
+
+#[test]
+fn test_regex_based_boundary_rules() {
+    use rulest_core::models::*;
+    use rulest_core::registry::*;
+    use rulest_core::queries;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    create_schema(&conn).unwrap();
+
+    let c = Crate { id: None, name: "db".to_string(), path: "crates/db".to_string(), description: None, bounded_context: None };
+    insert_crate(&conn, &c).unwrap();
+
+    let rule = OwnershipRule {
+        id: None, crate_name: "db".to_string(), description: "No business logic".to_string(),
+        kind: OwnershipRuleKind::MustNot, pattern: None, regex: Some("^(Issue|Revoke|Renew)".to_string()),
+    };
+    insert_ownership_rule(&conn, &rule).unwrap();
+
+    let a = queries::validate_boundary(&conn, "IssueCertificate", "db").unwrap();
+    assert!(a.iter().any(|a| matches!(a, rulest_core::advisory::Advisory::BoundaryViolation { .. })),
+        "IssueCertificate should violate regex, got: {:?}", a);
+
+    let a = queries::validate_boundary(&conn, "DatabasePool", "db").unwrap();
+    assert!(a.iter().all(|a| matches!(a, rulest_core::advisory::Advisory::SafeToCreate { .. })),
+        "DatabasePool should be safe, got: {:?}", a);
+}
+
+#[test]
+fn test_linked_symbols_in_validate_creation() {
+    use rulest_core::models::*;
+    use rulest_core::registry::*;
+    use rulest_core::queries;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    create_schema(&conn).unwrap();
+
+    let sym = LinkedSymbol {
+        id: None, source_name: "other-repo".to_string(), name: "SharedType".to_string(),
+        kind: Some("struct".to_string()), crate_name: Some("shared".to_string()),
+        module_path: Some("src/lib.rs".to_string()), signature: Some("struct SharedType".to_string()),
+        linked_at: "2026-01-01".to_string(),
+    };
+    insert_linked_symbol(&conn, &sym).unwrap();
+
+    let a = queries::validate_creation(&conn, "SharedType", "src/lib.rs").unwrap();
+    assert!(a.iter().any(|a| matches!(a, rulest_core::advisory::Advisory::ReuseExisting { .. })),
+        "SharedType should be found in linked symbols, got: {:?}", a);
+}
+
+#[test]
+fn test_schema_migration_v2_to_v3() {
+    use rulest_core::registry::*;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    // Simulate v2 database
+    conn.execute_batch(
+        "CREATE TABLE crates (id INTEGER PRIMARY KEY, name TEXT UNIQUE, path TEXT, description TEXT, status TEXT DEFAULT 'active', bounded_context TEXT);
+         CREATE TABLE modules (id INTEGER PRIMARY KEY, crate_id INTEGER, path TEXT UNIQUE, name TEXT);
+         CREATE TABLE symbols (id INTEGER PRIMARY KEY, module_id INTEGER, name TEXT, kind TEXT, visibility TEXT, signature TEXT, line_number INTEGER, scope TEXT, status TEXT, created_by TEXT, created_at TEXT, updated_at TEXT);
+         CREATE TABLE relationships (id INTEGER PRIMARY KEY, from_symbol_id INTEGER, to_symbol_id INTEGER, kind TEXT);
+         CREATE TABLE contracts (id INTEGER PRIMARY KEY, symbol_id INTEGER, kind TEXT, description TEXT);
+         CREATE TABLE ownership_rules (id INTEGER PRIMARY KEY, crate_name TEXT, description TEXT, kind TEXT);
+         CREATE TABLE crate_dependencies (id INTEGER PRIMARY KEY, from_crate_id INTEGER, to_crate_id INTEGER, UNIQUE(from_crate_id, to_crate_id));"
+    ).unwrap();
+    set_schema_version(&conn, 2).unwrap();
+
+    create_schema(&conn).unwrap();
+    assert_eq!(get_schema_version(&conn).unwrap(), SCHEMA_VERSION);
+
+    // Verify new columns
+    conn.execute("INSERT INTO ownership_rules (crate_name, description, kind, pattern) VALUES ('t', 't', 'must_not', 'Sql*')", []).unwrap();
+    // Verify new tables
+    conn.execute("INSERT INTO linked_registries (name, path, linked_at) VALUES ('r', '/tmp', '2026')", []).unwrap();
+    conn.execute("INSERT INTO linked_symbols (source_name, name, linked_at) VALUES ('r', 'Foo', '2026')", []).unwrap();
+}
+
+#[test]
+fn test_linked_registry_crud() {
+    use rulest_core::models::*;
+    use rulest_core::registry::*;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    create_schema(&conn).unwrap();
+
+    let link = LinkedRegistry { id: None, name: "ext".to_string(), path: "/tmp/ext.db".to_string(), linked_at: "2026".to_string() };
+    insert_linked_registry(&conn, &link).unwrap();
+
+    let links = list_linked_registries(&conn).unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].name, "ext");
+
+    let sym = LinkedSymbol {
+        id: None, source_name: "ext".to_string(), name: "ExtFn".to_string(),
+        kind: Some("function".to_string()), crate_name: Some("ext-crate".to_string()),
+        module_path: Some("src/lib.rs".to_string()), signature: None, linked_at: "2026".to_string(),
+    };
+    insert_linked_symbol(&conn, &sym).unwrap();
+
+    // Remove should clean up both registry and symbols
+    remove_linked_registry(&conn, "ext").unwrap();
+    let links = list_linked_registries(&conn).unwrap();
+    assert_eq!(links.len(), 0);
+
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM linked_symbols WHERE source_name = 'ext'", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 0, "Linked symbols should be removed");
 }

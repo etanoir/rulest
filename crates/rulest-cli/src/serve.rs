@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub fn run(db_path: &str) -> Result<(), String> {
+pub fn run_with_options(db_path: &str, auto_validate: bool) -> Result<(), String> {
     let path = Path::new(db_path);
     if !path.exists() {
         return Err(format!(
@@ -14,5 +14,5 @@ pub fn run(db_path: &str) -> Result<(), String> {
         .build()
         .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
 
-    rt.block_on(rulest_mcp::server::run_stdio(path))
+    rt.block_on(rulest_mcp::server::run_stdio_with_options(path, auto_validate))
 }
