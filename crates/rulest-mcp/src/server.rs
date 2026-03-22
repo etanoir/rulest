@@ -55,6 +55,24 @@ pub async fn run_stdio(db_path: &Path) -> Result<(), String> {
         };
 
         let id = request.get("id").cloned();
+
+        // Validate JSON-RPC version field (must be exactly "2.0")
+        match request.get("jsonrpc").and_then(|v| v.as_str()) {
+            Some("2.0") => {} // valid
+            _ => {
+                let error_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32600,
+                        "message": "Invalid Request: missing or invalid 'jsonrpc' field (must be \"2.0\")"
+                    }
+                });
+                write_response(&mut stdout, &error_response).await?;
+                continue;
+            }
+        }
+
         let method = match request.get("method").and_then(|m| m.as_str()) {
             Some(m) if !m.is_empty() => m,
             _ => {

@@ -26,10 +26,49 @@ pub fn validate_creation(
         });
         return Ok(advisories);
     } else if exact_matches.len() > 1 {
-        advisories.push(Advisory::AmbiguousMatch {
-            candidates: exact_matches,
-        });
-        return Ok(advisories);
+        // Separate definitions from re-exports
+        let (definitions, re_exports): (Vec<_>, Vec<_>) = exact_matches
+            .into_iter()
+            .partition(|s| s.kind != "re_export");
+
+        if definitions.len() == 1 {
+            // One definition + re-exports → prefer the definition
+            let existing = &definitions[0];
+            let note = if re_exports.is_empty() {
+                String::new()
+            } else {
+                let paths: Vec<String> = re_exports
+                    .iter()
+                    .map(|r| format!("{}::{}", r.crate_name, r.module_path))
+                    .collect();
+                format!(" Also re-exported from: {}", paths.join(", "))
+            };
+            advisories.push(Advisory::ReuseExisting {
+                existing: existing.clone(),
+                suggestion: format!(
+                    "Symbol '{}' already exists in {}::{}.{}",
+                    symbol_name, existing.crate_name, existing.module_path, note
+                ),
+            });
+            return Ok(advisories);
+        } else if definitions.is_empty() {
+            // Only re-exports exist — pick the first one
+            let existing = &re_exports[0];
+            advisories.push(Advisory::ReuseExisting {
+                existing: existing.clone(),
+                suggestion: format!(
+                    "Symbol '{}' is re-exported from {}::{}.",
+                    symbol_name, existing.crate_name, existing.module_path
+                ),
+            });
+            return Ok(advisories);
+        } else {
+            // Multiple definitions — genuinely ambiguous
+            advisories.push(Advisory::AmbiguousMatch {
+                candidates: definitions,
+            });
+            return Ok(advisories);
+        }
     }
 
     // Fuzzy match (LIKE with % wildcards)
@@ -1262,6 +1301,174 @@ mod tests {
         assert_eq!(split_camel_case("postservice"), vec!["postservice"]);
         assert_eq!(split_camel_case("DatabaseSchema"), vec!["database", "schema"]);
         assert_eq!(split_camel_case("URLParser"), vec!["u", "r", "l", "parser"]);
+    }
+
+    #[test]
+    fn test_validate_creation_prefers_definition_over_reexport() {
+        let conn = setup_test_db();
+
+        // Add a second crate with a lib.rs module for re-exports
+        let c2 = Crate {
+            id: None,
+            name: "crypto-types".to_string(),
+            path: "crates/crypto-types".to_string(),
+            description: None,
+            bounded_context: None,
+        };
+        let crate_id2 = insert_crate(&conn, &c2).unwrap();
+
+        let m_algo = Module {
+            id: None,
+            crate_id: crate_id2,
+            path: "crates/crypto-types/src/algorithm.rs".to_string(),
+            name: "algorithm".to_string(),
+        };
+        let module_algo_id = insert_module(&conn, &m_algo).unwrap();
+
+        let m_lib = Module {
+            id: None,
+            crate_id: crate_id2,
+            path: "crates/crypto-types/src/lib.rs".to_string(),
+            name: "lib".to_string(),
+        };
+        let module_lib_id = insert_module(&conn, &m_lib).unwrap();
+
+        // Definition: enum AlgorithmId in algorithm.rs
+        insert_symbol(
+            &conn,
+            &Symbol {
+                id: None,
+                module_id: module_algo_id,
+                name: "AlgorithmId".to_string(),
+                kind: SymbolKind::Enum,
+                visibility: Visibility::Public,
+                signature: Some("enum AlgorithmId".to_string()),
+                line_number: Some(5),
+                scope: None,
+                status: SymbolStatus::Stable,
+                created_by: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .unwrap();
+
+        // Re-export: pub use in lib.rs
+        insert_symbol(
+            &conn,
+            &Symbol {
+                id: None,
+                module_id: module_lib_id,
+                name: "AlgorithmId".to_string(),
+                kind: SymbolKind::ReExport,
+                visibility: Visibility::Public,
+                signature: Some("pub use algorithm::AlgorithmId".to_string()),
+                line_number: Some(1),
+                scope: None,
+                status: SymbolStatus::Stable,
+                created_by: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .unwrap();
+
+        let advisories =
+            validate_creation(&conn, "AlgorithmId", "crates/other/src/lib.rs").unwrap();
+        assert_eq!(advisories.len(), 1);
+        match &advisories[0] {
+            Advisory::ReuseExisting { existing, suggestion } => {
+                assert_eq!(existing.kind, "enum", "Should prefer the definition (enum), not re_export");
+                assert_eq!(existing.module_path, "crates/crypto-types/src/algorithm.rs");
+                assert!(suggestion.contains("re-exported"), "Suggestion should mention re-export: {}", suggestion);
+            }
+            other => panic!("Expected ReuseExisting pointing to definition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_creation_ambiguous_when_multiple_definitions() {
+        let conn = setup_test_db();
+
+        // Create two different crates each with a definition of the same name
+        let c2 = Crate {
+            id: None,
+            name: "crate-a".to_string(),
+            path: "crates/crate-a".to_string(),
+            description: None,
+            bounded_context: None,
+        };
+        let crate_a_id = insert_crate(&conn, &c2).unwrap();
+        let m_a = Module {
+            id: None,
+            crate_id: crate_a_id,
+            path: "crates/crate-a/src/lib.rs".to_string(),
+            name: "lib".to_string(),
+        };
+        let mod_a_id = insert_module(&conn, &m_a).unwrap();
+        insert_symbol(
+            &conn,
+            &Symbol {
+                id: None,
+                module_id: mod_a_id,
+                name: "DuplicateType".to_string(),
+                kind: SymbolKind::Struct,
+                visibility: Visibility::Public,
+                signature: None,
+                line_number: None,
+                scope: None,
+                status: SymbolStatus::Stable,
+                created_by: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .unwrap();
+
+        let c3 = Crate {
+            id: None,
+            name: "crate-b".to_string(),
+            path: "crates/crate-b".to_string(),
+            description: None,
+            bounded_context: None,
+        };
+        let crate_b_id = insert_crate(&conn, &c3).unwrap();
+        let m_b = Module {
+            id: None,
+            crate_id: crate_b_id,
+            path: "crates/crate-b/src/lib.rs".to_string(),
+            name: "lib".to_string(),
+        };
+        let mod_b_id = insert_module(&conn, &m_b).unwrap();
+        insert_symbol(
+            &conn,
+            &Symbol {
+                id: None,
+                module_id: mod_b_id,
+                name: "DuplicateType".to_string(),
+                kind: SymbolKind::Struct,
+                visibility: Visibility::Public,
+                signature: None,
+                line_number: None,
+                scope: None,
+                status: SymbolStatus::Stable,
+                created_by: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .unwrap();
+
+        let advisories =
+            validate_creation(&conn, "DuplicateType", "crates/other/src/lib.rs").unwrap();
+        assert_eq!(advisories.len(), 1);
+        match &advisories[0] {
+            Advisory::AmbiguousMatch { candidates } => {
+                assert_eq!(candidates.len(), 2, "Should have 2 definition candidates");
+                assert!(candidates.iter().all(|c| c.kind == "struct"), "All candidates should be definitions");
+            }
+            other => panic!("Expected AmbiguousMatch for multiple definitions, got {:?}", other),
+        }
     }
 
     #[test]

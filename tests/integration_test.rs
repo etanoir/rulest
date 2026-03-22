@@ -1220,15 +1220,21 @@ fn test_full_init_sync_query_pipeline() {
         advisories
     );
 
-    // "Price" exists as both struct and re-export, so it returns AmbiguousMatch.
+    // "Price" exists as both struct and re-export — should prefer the definition.
     let advisories = queries::validate_creation(&conn, "Price", "other").unwrap();
     assert!(
         advisories
             .iter()
-            .any(|a| matches!(a, rulest_core::advisory::Advisory::AmbiguousMatch { .. })),
-        "Price should produce AmbiguousMatch (struct + re-export), got: {:?}",
+            .any(|a| matches!(a, rulest_core::advisory::Advisory::ReuseExisting { .. })),
+        "Price should produce ReuseExisting (preferring definition over re-export), got: {:?}",
         advisories
     );
+    // Verify it points to the struct definition, not the re-export
+    if let Some(rulest_core::advisory::Advisory::ReuseExisting { existing, .. }) =
+        advisories.iter().find(|a| matches!(a, rulest_core::advisory::Advisory::ReuseExisting { .. }))
+    {
+        assert_eq!(existing.kind, "struct", "Should prefer the struct definition, got kind: {}", existing.kind);
+    }
 
     // Query validate_boundary
     let advisories = queries::validate_boundary(&conn, "NetworkClient", "domain").unwrap();
