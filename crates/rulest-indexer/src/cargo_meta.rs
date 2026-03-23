@@ -15,6 +15,7 @@ pub struct WorkspaceInfo {
 pub struct ModuleInfo {
     pub path: String,
     pub name: String,
+    pub language: rulest_core::models::Language,
 }
 
 /// Run `cargo metadata` and extract workspace members.
@@ -70,7 +71,7 @@ pub fn extract_workspace(workspace_root: &Path) -> Result<WorkspaceInfo, String>
         let mut module_infos = Vec::new();
 
         if src_dir.exists() {
-            collect_rs_files(&src_dir, &relative_path, &mut module_infos);
+            collect_source_files(&src_dir, &relative_path, &mut module_infos);
         }
 
         modules.push((package.name.clone(), module_infos));
@@ -101,47 +102,55 @@ fn is_excluded_dir(entry: &walkdir::DirEntry) -> bool {
         return false;
     }
     let file_name = entry.file_name().to_string_lossy();
-    if file_name == ".git" || file_name == "target" {
+    if file_name == ".git" || file_name == "target" || file_name == "node_modules" || file_name == "dist" {
         return true;
     }
     // A directory containing a `.git` file is a git submodule checkout
     entry.path().join(".git").is_file()
 }
 
-fn collect_rs_files(dir: &Path, base_path: &str, modules: &mut Vec<ModuleInfo>) {
+fn collect_source_files(dir: &Path, base_path: &str, modules: &mut Vec<ModuleInfo>) {
+    use rulest_core::models::Language;
+
     let walker = walkdir::WalkDir::new(dir)
         .into_iter()
         .filter_entry(|e| !is_excluded_dir(e))
         .filter_map(|e| e.ok());
 
     for entry in walker {
-        if entry.file_type().is_file()
-            && entry.path().extension().is_some_and(|ext| ext == "rs")
-        {
-            // Derive module name from file path
-            let name = entry
-                .path()
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            // Store the path relative to workspace root
-            let relative = format!(
-                "{}/src/{}",
-                base_path,
-                entry
-                    .path()
-                    .strip_prefix(dir)
-                    .unwrap_or(entry.path())
-                    .to_string_lossy()
-            );
-
-            modules.push(ModuleInfo {
-                path: relative,
-                name,
-            });
+        if !entry.file_type().is_file() {
+            continue;
         }
+
+        let ext = entry.path().extension().and_then(|e| e.to_str());
+        let language = match ext {
+            Some("rs") => Language::Rust,
+            Some("ts" | "tsx") => Language::TypeScript,
+            _ => continue,
+        };
+
+        let name = entry
+            .path()
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let relative = format!(
+            "{}/src/{}",
+            base_path,
+            entry
+                .path()
+                .strip_prefix(dir)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+        );
+
+        modules.push(ModuleInfo {
+            path: relative,
+            name,
+            language,
+        });
     }
 }
 

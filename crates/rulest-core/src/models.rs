@@ -20,6 +20,48 @@ pub struct Module {
     pub crate_id: i64,
     pub path: String,
     pub name: String,
+    pub language: Language,
+}
+
+/// The programming language of a source file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    Rust,
+    TypeScript,
+}
+
+impl Language {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::TypeScript => "typescript",
+        }
+    }
+}
+
+impl FromStr for Language {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "rust" => Ok(Self::Rust),
+            "typescript" => Ok(Self::TypeScript),
+            _ => Err(format!("Invalid language: '{}'", s)),
+        }
+    }
+}
+
+impl fmt::Display for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        Self::Rust
+    }
 }
 
 /// A symbol (function, struct, enum, trait, type alias) within a module.
@@ -107,6 +149,8 @@ pub enum SymbolKind {
     Static,
     Macro,
     ReExport,
+    Class,
+    Interface,
 }
 
 impl SymbolKind {
@@ -122,6 +166,8 @@ impl SymbolKind {
             Self::Static => "static",
             Self::Macro => "macro",
             Self::ReExport => "re_export",
+            Self::Class => "class",
+            Self::Interface => "interface",
         }
     }
 }
@@ -141,6 +187,8 @@ impl FromStr for SymbolKind {
             "static" => Ok(Self::Static),
             "macro" => Ok(Self::Macro),
             "re_export" => Ok(Self::ReExport),
+            "class" => Ok(Self::Class),
+            "interface" => Ok(Self::Interface),
             _ => Err(format!("Invalid symbol kind: '{}'", s)),
         }
     }

@@ -919,7 +919,7 @@ fn find_type_symbols(conn: &Connection, type_name: &str) -> Result<Vec<ExistingS
              FROM symbols s
              JOIN modules m ON s.module_id = m.id
              JOIN crates c ON m.crate_id = c.id
-             WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias', 're_export')",
+             WHERE s.name = ?1 AND s.kind IN ('struct', 'enum', 'trait', 'type_alias', 're_export', 'class', 'interface')",
         )
         .map_err(|e| format!("Failed to query type symbols: {}", e))?;
 
@@ -1175,6 +1175,7 @@ mod tests {
             crate_id,
             path: "crates/trading/src/fees.rs".to_string(),
             name: "fees".to_string(),
+            language: Language::Rust,
         };
         let module_id = insert_module(&conn, &m).unwrap();
 
@@ -1471,6 +1472,7 @@ mod tests {
             crate_id: crate_id2,
             path: "crates/crypto-types/src/algorithm.rs".to_string(),
             name: "algorithm".to_string(),
+            language: Language::Rust,
         };
         let module_algo_id = insert_module(&conn, &m_algo).unwrap();
 
@@ -1479,6 +1481,7 @@ mod tests {
             crate_id: crate_id2,
             path: "crates/crypto-types/src/lib.rs".to_string(),
             name: "lib".to_string(),
+            language: Language::Rust,
         };
         let module_lib_id = insert_module(&conn, &m_lib).unwrap();
 
@@ -1553,6 +1556,7 @@ mod tests {
             crate_id: crate_a_id,
             path: "crates/crate-a/src/lib.rs".to_string(),
             name: "lib".to_string(),
+            language: Language::Rust,
         };
         let mod_a_id = insert_module(&conn, &m_a).unwrap();
         insert_symbol(
@@ -1587,6 +1591,7 @@ mod tests {
             crate_id: crate_b_id,
             path: "crates/crate-b/src/lib.rs".to_string(),
             name: "lib".to_string(),
+            language: Language::Rust,
         };
         let mod_b_id = insert_module(&conn, &m_b).unwrap();
         insert_symbol(

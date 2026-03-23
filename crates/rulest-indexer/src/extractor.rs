@@ -8,10 +8,10 @@ use syn::{
     ItemType, ItemUse, ReturnType, TraitItem, UseTree,
 };
 
-/// Extracted symbols from a single Rust source file.
+/// Extracted symbols from a source file (language-agnostic).
 pub struct ExtractedFile {
     pub symbols: Vec<ExtractedSymbol>,
-    /// Trait implementation relationships: `(trait_name, type_name)` pairs.
+    /// Trait implementation relationships: `(trait_name, type_name)` pairs (Rust-specific).
     pub trait_impls: Vec<(String, String)>,
 }
 
@@ -23,6 +23,42 @@ pub struct ExtractedSymbol {
     pub signature: Option<String>,
     pub line_number: Option<u32>,
     pub scope: Option<String>,
+}
+
+/// Language-specific source code extractor.
+pub trait Extractor {
+    /// Extract symbols from a source file.
+    fn extract(&self, file_path: &Path) -> Result<ExtractedFile, String>;
+    /// File extensions this extractor handles (without the dot).
+    fn extensions(&self) -> &[&str];
+}
+
+/// Rust source code extractor (syn-based).
+pub struct RustExtractor;
+
+impl Extractor for RustExtractor {
+    fn extract(&self, file_path: &Path) -> Result<ExtractedFile, String> {
+        extract_symbols(file_path)
+    }
+    fn extensions(&self) -> &[&str] {
+        &["rs"]
+    }
+}
+
+/// Extract symbols from any supported source file, dispatching by extension.
+pub fn extract_symbols_any(file_path: &Path) -> Result<ExtractedFile, String> {
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    match ext {
+        "rs" => RustExtractor.extract(file_path),
+        #[cfg(feature = "typescript")]
+        "ts" | "tsx" => crate::ts_extractor::TsExtractor.extract(file_path),
+        #[cfg(not(feature = "typescript"))]
+        "ts" | "tsx" => Err("TypeScript support not enabled (compile with --features typescript)".to_string()),
+        _ => Err(format!("Unsupported file extension: .{}", ext)),
+    }
 }
 
 /// Parse a Rust source file and extract all symbols.
@@ -75,7 +111,9 @@ impl<'ast> Visit<'ast> for SymbolVisitor {
         });
         let is_ffi = has_ffi_abi
             || has_attribute(&node.attrs, "no_mangle")
-            || has_attribute(&node.attrs, "export_name");
+            || has_attribute(&node.attrs, "export_name")
+            || has_attribute(&node.attrs, "wasm_bindgen")
+            || has_attribute(&node.attrs, "napi");
 
         let kind = if is_ffi {
             SymbolKind::FfiFunction

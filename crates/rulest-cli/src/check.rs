@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use rulest_core::{advisory::Advisory, queries, registry};
-use rulest_indexer::extractor;
+use rulest_indexer::extractor::extract_symbols_any;
 
 /// Run check-file: parse a single file, detect new symbols, validate each.
 pub fn run_check_file(file_path: &str, db_path: &str) -> Result<(), String> {
@@ -23,7 +23,7 @@ pub fn run_check_file(file_path: &str, db_path: &str) -> Result<(), String> {
     let crate_name = extract_crate_name(file_path);
 
     // Extract symbols from the file
-    let extracted = extractor::extract_symbols(file)
+    let extracted = extract_symbols_any(file)
         .map_err(|e| format!("Failed to parse {}: {}", file_path, e))?;
 
     let mut has_warnings = false;
@@ -108,7 +108,7 @@ pub fn run_check_changed(db_path: &str) -> Result<(), String> {
 
     let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter(|l| l.ends_with(".rs"))
+        .filter(|l| l.ends_with(".rs") || l.ends_with(".ts") || l.ends_with(".tsx"))
         .map(|l| l.to_string())
         .collect();
 
@@ -128,7 +128,7 @@ pub fn run_check_changed(db_path: &str) -> Result<(), String> {
 
         let crate_name = extract_crate_name(file_path);
 
-        let extracted = match extractor::extract_symbols(file) {
+        let extracted = match extract_symbols_any(file) {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("SKIP: {} (parse error: {})", file_path, e);

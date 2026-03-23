@@ -1,12 +1,16 @@
 [package]
 name = "rulest-indexer"
-description = "syn-based source code indexer for rulest architecture registry"
+description = "Source code indexer for rulest architecture registry (Rust + TypeScript)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
+
+[features]
+default = []
+typescript = ["swc_ecma_parser", "swc_ecma_ast", "swc_common"]
 
 [dependencies]
 rulest-core = { path = "../rulest-core" }
@@ -19,3 +23,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+
+# TypeScript support (optional)
+swc_ecma_parser = { version = "36", optional = true }
+swc_ecma_ast = { version = "21", optional = true }
+swc_common = { version = "19", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

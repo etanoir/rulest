@@ -264,6 +264,7 @@ mod tests {
             crate_id,
             path: "crates/mylib/src/utils.rs".to_string(),
             name: "utils".to_string(),
+            language: rulest_core::models::Language::Rust,
         };
         let module_id = insert_module(&conn, &m).unwrap();
 

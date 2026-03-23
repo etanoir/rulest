@@ -8,3 +8,5 @@
 pub mod cargo_meta;
 pub mod extractor;
 pub mod sync;
+#[cfg(feature = "typescript")]
+pub mod ts_extractor;

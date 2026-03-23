@@ -165,7 +165,7 @@ enum Commands {
 
     /// Check a single file for architecture violations
     CheckFile {
-        /// Path to the .rs file to check
+        /// Path to the source file to check (.rs, .ts, .tsx)
         file: String,
 
         /// Path to the registry database

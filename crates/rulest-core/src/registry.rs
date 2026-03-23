@@ -5,9 +5,9 @@ use rusqlite::{Connection, Result as SqlResult};
 #[allow(unused_imports)]
 use crate::models::*;
 
-/// Current schema version. Set to 3 for pattern-based rules and linked symbols.
+/// Current schema version. Set to 4 for multi-language module support.
 /// Versions 0 and 1 are considered pre-migration databases.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS crates (
@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS modules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     crate_id INTEGER NOT NULL REFERENCES crates(id) ON DELETE CASCADE,
     path TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'rust'
 );
 
 -- NOTE: The article schema includes purpose/status on modules, but we omit these
@@ -164,6 +165,9 @@ fn migrate(conn: &Connection, from_version: i32) -> SqlResult<()> {
     if from_version < 3 {
         migrate_to_v3(conn)?;
     }
+    if from_version < 4 {
+        migrate_to_v4(conn)?;
+    }
     Ok(())
 }
 
@@ -203,6 +207,14 @@ fn migrate_to_v3(conn: &Connection) -> SqlResult<()> {
     )
 }
 
+/// Migration to v4: adds language column to modules table.
+fn migrate_to_v4(conn: &Connection) -> SqlResult<()> {
+    let _ = conn.execute_batch(
+        "ALTER TABLE modules ADD COLUMN language TEXT NOT NULL DEFAULT 'rust'"
+    );
+    Ok(())
+}
+
 /// Insert a crate, returning its id.
 pub fn insert_crate(conn: &Connection, c: &Crate) -> SqlResult<i64> {
     conn.execute(
@@ -215,8 +227,8 @@ pub fn insert_crate(conn: &Connection, c: &Crate) -> SqlResult<i64> {
 /// Insert a module, returning its id.
 pub fn insert_module(conn: &Connection, m: &Module) -> SqlResult<i64> {
     conn.execute(
-        "INSERT OR REPLACE INTO modules (crate_id, path, name) VALUES (?1, ?2, ?3)",
-        rusqlite::params![m.crate_id, m.path, m.name],
+        "INSERT OR REPLACE INTO modules (crate_id, path, name, language) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![m.crate_id, m.path, m.name, m.language.as_str()],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -381,14 +393,16 @@ pub fn delete_symbols_for_module(conn: &Connection, module_id: i64) -> SqlResult
 
 /// Find a module by its file path.
 pub fn find_module_by_path(conn: &Connection, path: &str) -> SqlResult<Option<Module>> {
-    let mut stmt = conn.prepare("SELECT id, crate_id, path, name FROM modules WHERE path = ?1")?;
+    let mut stmt = conn.prepare("SELECT id, crate_id, path, name, language FROM modules WHERE path = ?1")?;
     let result = stmt
         .query_row(rusqlite::params![path], |row| {
+            let lang_str: String = row.get::<_, String>(4).unwrap_or_else(|_| "rust".to_string());
             Ok(Module {
                 id: Some(row.get(0)?),
                 crate_id: row.get(1)?,
                 path: row.get(2)?,
                 name: row.get(3)?,
+                language: lang_str.parse().unwrap_or(Language::Rust),
             })
         })
         .ok();
@@ -596,6 +610,7 @@ mod tests {
             crate_id,
             path: "src/lib.rs".to_string(),
             name: "lib".to_string(),
+            language: Language::Rust,
         };
         let module_id = insert_module(&conn, &m).unwrap();
 

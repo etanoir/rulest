@@ -514,6 +514,7 @@ fn test_status_returns_detailed_stats() {
         crate_id,
         path: "crates/test/src/lib.rs".to_string(),
         name: "lib".to_string(),
+        language: rulest_core::models::Language::Rust,
     };
     let module_id = registry::insert_module(&conn, &m).unwrap();
 
@@ -1304,6 +1305,7 @@ fn test_query_tools_integration() {
         crate_id,
         path: "crates/mylib/src/lib.rs".to_string(),
         name: "lib".to_string(),
+        language: rulest_core::models::Language::Rust,
     };
     let module_id = registry::insert_module(&conn, &m).unwrap();
 
@@ -1358,6 +1360,7 @@ fn test_register_plan_and_check_wip() {
         crate_id,
         path: "crates/mylib/src/handlers.rs".to_string(),
         name: "handlers".to_string(),
+        language: rulest_core::models::Language::Rust,
     };
     registry::insert_module(&conn, &m).unwrap();
 

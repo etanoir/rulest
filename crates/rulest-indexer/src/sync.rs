@@ -250,6 +250,7 @@ pub fn sync_workspace(
                 crate_id,
                 path: module_info.path.clone(),
                 name: module_info.name.clone(),
+                language: module_info.language,
             };
             let module_id = registry::insert_module(conn, &module)
                 .map_err(|e| format!("Failed to insert module '{}': {}", module_info.path, e))?;
@@ -265,7 +266,7 @@ pub fn sync_workspace(
 
             // Extract symbols from source
             let mut extracted_names: HashSet<String> = HashSet::new();
-            match extractor::extract_symbols(&file_path) {
+            match extractor::extract_symbols_any(&file_path) {
                 Ok(extracted) => {
                     for sym in extracted.symbols {
                         extracted_names.insert(sym.name.clone());

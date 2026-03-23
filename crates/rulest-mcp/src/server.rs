@@ -212,7 +212,7 @@ fn handle_file_changed(params: &Value, conn: &rusqlite::Connection) -> Vec<Value
         return Vec::new();
     }
 
-    let extracted = match rulest_indexer::extractor::extract_symbols(path) {
+    let extracted = match rulest_indexer::extractor::extract_symbols_any(path) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
