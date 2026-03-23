@@ -306,9 +306,70 @@ Signatures include full generic parameters and lifetimes. `fn process<T: Clone +
 
 Sync uses SHA-256 content hashes (not file modification times) to detect changes. This means `git checkout`, `git rebase`, and `git stash pop` won't cause stale registries. Old sync.log files from pre-1.2.0 will trigger an automatic full resync.
 
+### Pattern-based boundary rules
+
+In addition to text-based matching, ownership rules support glob and regex patterns for precise symbol matching:
+
+```sh
+# Glob patterns (comma-separated)
+rulest add-rule core "No SQL types" --kind must_not --pattern "Sql*,*Repository,Pg*"
+rulest add-rule core "No PKCS#11 types" --kind must_not --pattern "CK_*"
+
+# Regex patterns
+rulest add-rule db "No business logic" --kind must_not --regex "^(Issue|Revoke|Renew)"
+```
+
+Pattern rules are checked before text-based matching. Both rule types can coexist on the same crate.
+
+### Pre-commit hook integration
+
+Check staged files for architecture violations before committing:
+
+```sh
+rulest check --changed-only [--db <registry.db>]
+```
+
+Check a single file:
+
+```sh
+rulest check-file <path> [--db <registry.db>]
+```
+
+Example pre-commit hook:
+
+```bash
+#!/bin/sh
+rulest sync --full && rulest check --changed-only
+```
+
+Exit codes: `0` (pass), `1` (warnings), `2` (errors).
+
+### Cross-repo registry linking
+
+When multiple repos share types, link their registries for cross-repo duplicate detection:
+
+```sh
+rulest link --name rustsm --db-path ../rustsm/.architect/registry.db
+rulest link --list
+rulest link --refresh   # re-sync all linked registries
+rulest link --remove rustsm
+```
+
+Linked symbols are checked transparently by `validate_creation` — if a symbol exists in a linked registry, it returns `reuse_existing` with source attribution.
+
+### MCP auto-validate mode
+
+Enable proactive validation in the MCP server:
+
+```sh
+rulest serve --db .architect/registry.db --auto-validate
+```
+
+In this mode, the server responds to `notifications/file_changed` by parsing the file and returning advisories — no explicit tool calls needed.
+
 ### Concurrency
 
-Rulest uses a file-based lock (`.architect/sync.lock`) to prevent concurrent sync operations from corrupting the registry. If a sync is already running, the second invocation will fail with a clear error message. Stale locks (older than 10 minutes) are automatically cleaned up.
+Rulest uses file-based locks (`.architect/sync.lock`, `.architect/init.lock`) to prevent concurrent operations from corrupting the registry. If a sync or init is already running, the second invocation will fail with a clear error message. Stale locks are automatically cleaned up (10 minutes for sync, 2 minutes for init).
 
 The MCP server is single-threaded (stdio-based). Multiple Claude Code sessions should each have their own MCP server instance.
 
@@ -320,7 +381,8 @@ The indexer extracts names, types, visibility, and signatures. It never stores f
 
 ```
 rulest init            [-w <Cargo.toml>]          Initialize the registry
-rulest add-rule        <crate> <desc> [-k <kind>] Add an ownership rule
+rulest add-rule        <crate> <desc> [-k <kind>] [--pattern <globs>] [--regex <pattern>]
+                                                  Add an ownership rule
 rulest sync            [-w <Cargo.toml>] [--full] Sync source code into registry
 rulest query           [symbol]                   Look up a symbol
 rulest query           --validate-creation <name> --target <module>
@@ -333,8 +395,15 @@ rulest register-plan   <plan> [--agent <name>] [--db <path>]
                                                   Register planned symbols into the registry
 rulest build           [--workspace <path>] [-- <cargo-args>...]
                                                   Build workspace and sync registry
-rulest serve           [-d <registry.db>]         Start MCP server (stdio)
+rulest serve           [-d <registry.db>] [--auto-validate]
+                                                  Start MCP server (stdio)
 rulest scaffold        [-w <Cargo.toml>]          Generate project templates
+rulest check-file      <file> [--db <path>]       Check a file for architecture violations
+rulest check           --changed-only [--db <path>]
+                                                  Check staged files (pre-commit hook)
+rulest link            --name <n> --db-path <p>   Link an external registry
+rulest link            --list | --refresh | --remove <name>
+                                                  Manage linked registries
 ```
 
 ## License
